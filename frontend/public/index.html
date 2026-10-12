@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="menu" aria-label="Menú">
+      <h1 class="brand">Notas</h1>
+
+      <section class="panel" aria-labelledby="cal-title">
+        <h2 id="cal-title" class="panel-title">Calendario</h2>
+        <div id="calendar" class="calendar"></div>
+      </section>
+
+      <section class="panel panel-grow" aria-labelledby="filters-title">
+        <div class="panel-head">
+          <h2 id="filters-title" class="panel-title">Filtros</h2>
+          <button id="clear-filters" class="link-btn" type="button" hidden>Limpiar</button>
+        </div>
+        <div id="filters"></div>
+      </section>
+    </aside>
+
+    <main class="board">
+      <header class="board-head">
+        <h2 id="board-title">En cola</h2>
+        <p id="board-summary" class="board-summary"></p>
+      </header>
+      <ol id="tickets" class="tickets"></ol>
+      <div id="board-empty" class="board-empty" hidden></div>
+    </main>
+  </div>
+
+  <button id="new-note" class="fab" type="button" aria-label="Nueva nota" title="Nueva nota (N)">
+    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+
+  <!-- Bloc de notas -->
+  <dialog id="editor" class="sheet sheet-wide" aria-labelledby="editor-title">
+    <form method="dialog" class="sheet-inner" id="editor-form">
+      <header class="sheet-head">
+        <h2 id="editor-title">Nueva nota</h2>
+        <button class="icon-btn" value="cancel" aria-label="Cerrar">&times;</button>
+      </header>
+      <div class="editor-grid">
+        <div class="editor-col">
+          <label for="editor-text" class="sr-only">Texto de la nota</label>
+          <textarea id="editor-text" spellcheck="true" placeholder="Titulo: Reunión con Edu Rosales
+Reunión sobre contingencia, pendientes de planillas y Federación
+
+#enviar correo a John Obregón
+#terminar de procesar las planillas
+
+@Apolo
+
+$Alta"></textarea>
+          <p class="syntax-help">
+            <span><b>#</b> pendiente</span>
+            <span><b>@</b> etiqueta</span>
+            <span><b>$</b> prioridad: Alta, Media o Baja</span>
+          </p>
+        </div>
+        <div class="editor-col">
+          <p class="preview-label">Así quedará el ticket</p>
+          <div id="editor-preview" class="preview" aria-live="polite"></div>
+        </div>
+      </div>
+      <p id="editor-error" class="form-error" role="alert" hidden></p>
+      <footer class="sheet-foot">
+        <span class="hint">Ctrl + Enter para guardar</span>
+        <button class="btn" value="cancel">Cancelar</button>
+        <button class="btn btn-primary" id="editor-save" type="button">Guardar nota</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Detalle de la nota -->
+  <dialog id="detail" class="sheet" aria-labelledby="detail-title">
+    <div class="sheet-inner" id="detail-body"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
