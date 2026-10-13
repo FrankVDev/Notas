@@ -24,20 +24,39 @@ function fill(el, ...kids) {
   el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
 }
 
+// Identificador de esta pestaña. El servidor lo incluye en los avisos en vivo
+// para que cada pantalla ignore los cambios que hizo ella misma.
+// (crypto.randomUUID no existe en http por IP, de ahí el respaldo)
+const CLIENT_ID = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+// Cambios enviados al servidor que aún no tienen respuesta
+let mutating = 0;
+
 async function api(path, options = {}) {
-  const res = await fetch("/api" + path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!res.ok) {
-    let msg = `El servidor respondió con error ${res.status}.`;
-    try {
-      const data = await res.json();
-      if (typeof data.detail === "string") msg = data.detail;
-    } catch { /* sin cuerpo */ }
-    throw new Error(msg);
+  const isWrite = options.method && options.method !== "GET";
+  if (isWrite) mutating++;
+  try {
+    const res = await fetch("/api" + path, {
+      headers: { "Content-Type": "application/json", "X-Client-Id": CLIENT_ID },
+      ...options,
+    });
+    if (!res.ok) {
+      let msg = `El servidor respondió con error ${res.status}.`;
+      try {
+        const data = await res.json();
+        if (typeof data.detail === "string") msg = data.detail;
+      } catch { /* sin cuerpo */ }
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return res.status === 204 ? null : res.json();
+  } finally {
+    if (isWrite) {
+      mutating--;
+      if (mutating === 0 && syncWanted) requestSync();
+    }
   }
-  return res.status === 204 ? null : res.json();
 }
 
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -118,6 +137,7 @@ const state = {
   detail: null,          // nota abierta en el detalle
   hidden: new Set(),     // notas borradas que aún se pueden deshacer
   expanded: new Set(),   // tickets con la lista de pendientes abierta (por defecto, contraídos)
+  flash: new Set(),      // tickets que cambiaron en otro dispositivo (se resaltan un momento)
   loaded: false,
 };
 
@@ -367,7 +387,7 @@ function ticket(note, isNext) {
           : null,
         expanded && hiddenCount > 0 ? h("p", { class: "pend-more" }, `y ${hiddenCount} más en el detalle`) : null);
 
-  return h("li", { class: "ticket-wrap", "data-note-id": note.id },
+  return h("li", { class: `ticket-wrap${state.flash.has(note.id) ? " is-flash" : ""}`, "data-note-id": note.id },
     h("article", { class: `ticket${done ? " is-done" : ""}` },
       h("header", { class: "ticket-head" },
         h("span", { class: "ticket-num" }, `N.º ${pad(note.id)}`),
@@ -570,6 +590,7 @@ async function commitDelete(id) {
     loadMeta();
   } catch (e) {
     state.hidden.delete(id);
+    if (e.status === 404) return;  // ya la había borrado otro dispositivo
     toast(`No se pudo eliminar la nota. ${e.message}`);
     loadNotes();
   }
@@ -602,6 +623,8 @@ let previewTimer;
 
 function openEditor(note = null) {
   state.editing = note;
+  state.editingRemote = null;  // "updated" | "deleted" si cambió en otro dispositivo
+  $("#editor-remote").hidden = true;
   $("#editor-title").textContent = note ? `Editar nota N.º ${pad(note.id)}` : "Nueva nota";
   $("#editor-save").textContent = note ? "Guardar cambios" : "Guardar nota";
   editorText.value = note ? note.raw : "Titulo: ";
@@ -653,7 +676,7 @@ async function saveEditor() {
   btn.disabled = true;
   try {
     const body = JSON.stringify({ raw });
-    if (state.editing) {
+    if (state.editing && state.editingRemote !== "deleted") {
       await api(`/notes/${state.editing.id}`, { method: "PUT", body });
       toast("Cambios guardados.");
     } else {
@@ -680,6 +703,36 @@ $("#new-note").addEventListener("click", () => openEditor());
 
 // ---------- Detalle ----------
 const detail = $("#detail");
+
+function showEditorRemote(op) {
+  state.editingRemote = op;
+  const box = $("#editor-remote");
+  if (op === "deleted") {
+    fill(box,
+      h("span", {}, "Esta nota se eliminó en otro dispositivo. Si guardas, se creará como una nota nueva."));
+    $("#editor-save").textContent = "Guardar como nota nueva";
+  } else {
+    fill(box,
+      h("span", {}, "Esta nota cambió en otro dispositivo. Si guardas, tus cambios reemplazarán los suyos."),
+      h("button", { type: "button", class: "link-btn", onclick: loadRemoteVersion }, "Ver la versión nueva"));
+  }
+  box.hidden = false;
+}
+
+async function loadRemoteVersion() {
+  try {
+    const fresh = await api(`/notes/${state.editing.id}`);
+    state.editing = fresh;
+    state.editingRemote = null;
+    editorText.value = fresh.raw;
+    $("#editor-remote").hidden = true;
+    schedulePreview();
+    editorText.focus();
+  } catch (e) {
+    if (e.status === 404) showEditorRemote("deleted");
+    else toast(e.message);
+  }
+}
 
 async function openDetail(id) {
   try {
@@ -749,4 +802,102 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ---------- Sincronización en vivo entre dispositivos ----------
+let syncWanted = false;
+let syncTimer = null;
+
+// Agrupa varios avisos seguidos en una sola recarga
+function requestSync() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 150);
+}
+
+async function syncNow() {
+  // si hay un cambio propio en camino, se espera a que termine
+  // para no mostrar por un instante el estado anterior
+  if (mutating > 0) { syncWanted = true; return; }
+  syncWanted = false;
+  await Promise.all([loadNotes(), loadMeta()]);
+  if (state.flash.size) setTimeout(() => state.flash.clear(), 1600);
+
+  if (detail.open && state.detail) {
+    try {
+      const fresh = await api(`/notes/${state.detail.id}`);
+      if (detail.open && state.detail?.id === fresh.id) keepFocus(() => renderDetail(fresh));
+    } catch (e) {
+      if (e.status === 404 && detail.open) {
+        detail.close();
+        toast("La nota que tenías abierta se eliminó en otro dispositivo.");
+      }
+    }
+  }
+}
+
+function onRemoteChange(event) {
+  let change;
+  try { change = JSON.parse(event.data); } catch { return; }
+  if (change.origin === CLIENT_ID) return;  // es un cambio de esta misma pestaña
+  if (change.op !== "deleted") state.flash.add(change.id);
+  if (editor.open && state.editing?.id === change.id) showEditorRemote(change.op);
+  requestSync();
+}
+
+let live = null;
+let liveDown = false;
+let liveDownTimer = null;
+let reconnectTimer = null;
+
+function setLiveStatus(ok) {
+  if (ok) {
+    clearTimeout(liveDownTimer);
+    liveDownTimer = null;
+    $("#live-status").hidden = true;
+    return;
+  }
+  // solo se avisa si el corte dura más de unos segundos; los reintentos
+  // no reinician la cuenta
+  if (!liveDownTimer && $("#live-status").hidden) {
+    liveDownTimer = setTimeout(() => { $("#live-status").hidden = false; }, 5000);
+  }
+}
+
+function connectLive() {
+  if (!("EventSource" in window)) return;
+  clearTimeout(reconnectTimer);
+  live?.close();
+  live = new EventSource("/api/events");
+
+  live.addEventListener("ready", () => {
+    setLiveStatus(true);
+    // al reconectar pudo haber cambios que no llegaron: se recarga una vez
+    if (liveDown) requestSync();
+    liveDown = false;
+  });
+  live.addEventListener("change", onRemoteChange);
+  live.onerror = () => {
+    liveDown = true;
+    setLiveStatus(false);
+    // si el servidor respondió con error (no solo un corte), el navegador
+    // deja de reintentar por su cuenta: se reintenta aquí
+    if (live.readyState === EventSource.CLOSED) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connectLive, 5000);
+    }
+  };
+}
+
+// Al volver a la pestaña o desbloquear el celular
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  requestSync();
+  if (!live || live.readyState === EventSource.CLOSED) connectLive();
+});
+window.addEventListener("online", () => { requestSync(); connectLive(); });
+
+// Respaldo: por si la conexión en vivo falla sin que el navegador lo note
+setInterval(() => {
+  if (document.visibilityState === "visible") requestSync();
+}, 30000);
+
 refresh();
+connectLive();

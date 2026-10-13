@@ -60,6 +60,16 @@ Ctrl + Enter guarda la nota.
 - Al completar o eliminar una nota aparece un aviso con **Deshacer** durante unos segundos. La nota eliminada se borra de verdad cuando ese aviso desaparece.
 - En el celular, el calendario y los filtros están en el panel que abre el botón **Filtros**.
 
+## Sincronización entre dispositivos
+
+Todas las pantallas abiertas (PC, celular, otras pestañas) se actualizan solas en menos de un segundo cuando algo cambia en otra. No hace falta recargar.
+
+- El servidor avisa de cada cambio por una conexión abierta (Server-Sent Events en `/api/events`) y cada pantalla vuelve a pedir lo que necesita. Cada pestaña ignora los avisos de sus propios cambios.
+- Los tickets que cambiaron en otro dispositivo se resaltan un momento.
+- Si estás editando una nota y alguien la modifica o la borra en otro dispositivo, el editor te avisa antes de que guardes.
+- Si la conexión se corta, aparece "Sin conexión en vivo. Reintentando…" y se reconecta sola. Como respaldo, la pantalla también se actualiza al volver a la pestaña y cada 30 segundos.
+- Los avisos viven en la memoria del backend, por eso la API debe correr con un solo proceso de uvicorn (como está configurada).
+
 ## Arquitectura
 
 ```
@@ -77,6 +87,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 │   ├── app/
 │   │   ├── main.py         # endpoints REST
 │   │   ├── models.py       # tablas notes y tasks
+│   │   ├── events.py       # avisos en vivo entre dispositivos
 │   │   └── parser.py       # interpreta el texto con #, @ y $
 │   └── tests/test_parser.py
 └── frontend/
@@ -96,6 +107,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 | POST | `/api/notes/{id}/complete` y `/reopen` | Completar o devolver a la cola (solo notas sin pendientes) |
 | POST | `/api/parse` `{raw}` | Vista previa sin guardar |
 | GET | `/api/meta?month=YYYY-MM` | Etiquetas, prioridades y días con notas |
+| GET | `/api/events` | Avisos en vivo de cambios (Server-Sent Events) |
 
 ## Desarrollo
 

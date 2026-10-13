@@ -34,6 +34,7 @@
       <header class="board-head">
         <h2 id="board-title" tabindex="-1">En cola</h2>
         <p id="board-summary" class="board-summary">Cargando notas…</p>
+        <p id="live-status" class="live-status" role="status" hidden>Sin conexión en vivo. Reintentando…</p>
         <button id="open-menu" class="btn filters-btn" type="button" aria-controls="menu" aria-expanded="false">
           Filtros<span id="filters-badge" class="badge" hidden></span>
         </button>
@@ -78,6 +79,7 @@ $Alta"></textarea>
           <div id="editor-preview" class="preview" aria-live="polite"></div>
         </div>
       </div>
+      <p id="editor-remote" class="form-warning" role="alert" hidden></p>
       <p id="editor-error" class="form-error" role="alert" hidden></p>
       <footer class="sheet-foot">
         <span class="hint">Ctrl + Enter para guardar</span>

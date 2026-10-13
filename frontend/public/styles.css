@@ -209,6 +209,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .board-head { margin-bottom: 22px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 .board-head h2 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
 .board-summary { margin: 0; color: var(--muted); }
+.live-status {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.live-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--media);
+}
+.live-status[hidden] { display: none; }
 
 
 .tickets {
@@ -348,6 +364,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .prio-otra { color: #3c4856; }
 
 .ticket.is-done { opacity: .78; }
+.ticket-wrap.is-flash .ticket { animation: remote-change 1.6s ease-out; }
+@keyframes remote-change {
+  0%, 30% { box-shadow: inset 0 0 0 3px var(--accent); }
+  100% { box-shadow: inset 0 0 0 3px transparent; }
+}
 .ticket-wrap.is-leaving {
   transition: opacity .4s ease, transform .4s ease;
   opacity: 0;
@@ -435,6 +456,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .preview-empty { color: #8a949e; margin: 0; }
 
 .form-error { margin: 0; color: var(--danger); }
+.form-warning {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 4px solid var(--media);
+  background: color-mix(in srgb, var(--media) 12%, var(--panel));
+}
+.form-warning[hidden] { display: none; }
 .sheet-foot { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .sheet-foot .hint { margin-right: auto; color: var(--muted); font-size: 14px; }
 .sheet-foot .spacer { margin-right: auto; }
@@ -545,6 +578,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
+  .live-status { order: 4; flex-basis: 100%; }
   /* En pantallas chicas el menú es un panel lateral: los tickets se ven primero */
   .menu {
     position: fixed;

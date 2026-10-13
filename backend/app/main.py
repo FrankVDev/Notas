@@ -1,15 +1,18 @@
+import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
 from datetime import date as Date, datetime, timezone
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from .events import broker
 from .models import Base, Note, SessionLocal, Task, engine
 from .parser import parse_note
 
@@ -27,6 +30,7 @@ async def lifespan(_: FastAPI):
             if attempt == 9:
                 raise
             time.sleep(2)
+    broker.bind(asyncio.get_running_loop())
     yield
 
 
@@ -36,6 +40,10 @@ app = FastAPI(title="Notas API", docs_url="/api/docs", openapi_url="/api/openapi
 def get_db():
     with SessionLocal() as db:
         yield db
+
+
+# Cada pestaña envía un id propio; así ignora los avisos de sus propios cambios
+ClientId = Header(default=None, alias="X-Client-Id", max_length=64)
 
 
 # ---------- Esquemas ----------
@@ -177,12 +185,13 @@ def list_notes(
 
 
 @app.post("/api/notes", response_model=NoteOut, status_code=201)
-def create_note(body: NoteIn, db: Session = Depends(get_db)):
+def create_note(body: NoteIn, db: Session = Depends(get_db), client: str | None = ClientId):
     note = Note(raw=body.raw, title="", description="", tags=[])
     apply_raw(note, body.raw)
     db.add(note)
     db.commit()
     db.refresh(note)
+    broker.publish("created", note.id, client)
     return to_out(note)
 
 
@@ -192,43 +201,47 @@ def get_note(note_id: int, db: Session = Depends(get_db)):
 
 
 @app.put("/api/notes/{note_id}", response_model=NoteOut)
-def update_note(note_id: int, body: NoteIn, db: Session = Depends(get_db)):
+def update_note(note_id: int, body: NoteIn, db: Session = Depends(get_db), client: str | None = ClientId):
     note = get_note_or_404(db, note_id)
     apply_raw(note, body.raw)
     db.commit()
     db.refresh(note)
+    broker.publish("updated", note.id, client)
     return to_out(note)
 
 
 @app.delete("/api/notes/{note_id}", status_code=204)
-def delete_note(note_id: int, db: Session = Depends(get_db)):
+def delete_note(note_id: int, db: Session = Depends(get_db), client: str | None = ClientId):
     db.delete(get_note_or_404(db, note_id))
     db.commit()
+    broker.publish("deleted", note_id, client)
     return Response(status_code=204)
 
 
 @app.post("/api/notes/{note_id}/complete", response_model=NoteOut)
-def complete_note(note_id: int, db: Session = Depends(get_db)):
+def complete_note(note_id: int, db: Session = Depends(get_db), client: str | None = ClientId):
     note = get_note_or_404(db, note_id)
     if note.tasks:
         raise HTTPException(409, "Esta nota sale de la cola cuando marcas todos sus pendientes.")
     note.completed_at = datetime.now(timezone.utc)
     db.commit()
+    broker.publish("updated", note.id, client)
     return to_out(note)
 
 
 @app.post("/api/notes/{note_id}/reopen", response_model=NoteOut)
-def reopen_note(note_id: int, db: Session = Depends(get_db)):
+def reopen_note(note_id: int, db: Session = Depends(get_db), client: str | None = ClientId):
     note = get_note_or_404(db, note_id)
     if note.tasks:
         raise HTTPException(409, "Desmarca algún pendiente para devolverla a la cola.")
     note.completed_at = None
     db.commit()
+    broker.publish("updated", note.id, client)
     return to_out(note)
 
 
 @app.patch("/api/tasks/{task_id}", response_model=NoteOut)
-def toggle_task(task_id: int, body: TaskPatch, db: Session = Depends(get_db)):
+def toggle_task(task_id: int, body: TaskPatch, db: Session = Depends(get_db), client: str | None = ClientId):
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(404, "El pendiente no existe.")
@@ -237,7 +250,34 @@ def toggle_task(task_id: int, body: TaskPatch, db: Session = Depends(get_db)):
     sync_completion(note)
     db.commit()
     db.refresh(note)
+    broker.publish("updated", note.id, client)
     return to_out(note)
+
+
+@app.get("/api/events")
+async def events(request: Request):
+    """Conexión abierta por la que el servidor avisa de cada cambio."""
+    queue = broker.subscribe()
+
+    async def stream():
+        try:
+            # retry: cada cuánto reintenta el navegador si se corta (ms)
+            yield "retry: 3000\nevent: ready\ndata: {}\n\n"
+            while not await request.is_disconnected():
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"event: change\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    # comentario vacío para que proxies y celulares no corten la conexión
+                    yield ": ping\n\n"
+        finally:
+            broker.unsubscribe(queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/meta", response_model=MetaOut)
