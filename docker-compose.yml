@@ -20,6 +20,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       APP_TZ: ${APP_TZ:-America/Lima}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +32,24 @@ services:
       - "${WEB_PORT:-8080}:80"
     depends_on:
       - api
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      TZ: ${APP_TZ:-America/Lima}
+    volumes:
+      - ./respaldos:/respaldos
+      - ./backup/backup.sh:/backup.sh:ro
+    entrypoint: ["sh", "/backup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   notas_data:

@@ -40,6 +40,9 @@ async function api(path, options = {}) {
       headers: { "Content-Type": "application/json", "X-Client-Id": CLIENT_ID },
       ...options,
     });
+    if (res.status === 401 && !path.startsWith("/auth/") && state.user) {
+      lockApp("Tu sesión terminó. Vuelve a entrar para continuar.");
+    }
     if (!res.ok) {
       let msg = `El servidor respondió con error ${res.status}.`;
       try {
@@ -128,6 +131,7 @@ function startToastTimer(ms) {
   toastTimer = setTimeout(hideToast, ms);
 }
 function toast(msg, { action = null, duration } = {}) {
+  if (!state.user) return;  // sin sesión no hay a quién avisar
   $("#toast-msg").textContent = msg;
   const btn = $("#toast-action");
   btn.hidden = !action;
@@ -621,6 +625,7 @@ function removeFromBoard(id) {
 
 // Aplica una versión nueva de una nota en el tablero y en el detalle
 function applyNote(note) {
+  if (!state.user) return;  // la sesión se cerró: no dibujar nada detrás del inicio de sesión
   const i = state.notes.findIndex((n) => n.id === note.id);
   if (belongsToView(note)) {
     if (i >= 0) state.notes[i] = note;
@@ -728,6 +733,14 @@ async function commitDelete(id) {
     toast(`No se pudo eliminar la nota. ${e.message}`);
     loadNotes();
   }
+}
+
+function flushDeletes() {
+  for (const [id, timer] of pendingDeletes) {
+    clearTimeout(timer);
+    fetch(`/api/notes/${id}`, { method: "DELETE", keepalive: true, headers: { "X-Client-Id": CLIENT_ID } });
+  }
+  pendingDeletes.clear();
 }
 
 // Si se cierra la página con un borrado pendiente, se completa igual
@@ -1140,6 +1153,7 @@ function requestSync() {
 }
 
 async function syncNow() {
+  if (!state.user) return;
   // si hay un cambio propio en camino, se espera a que termine
   // para no mostrar por un instante el estado anterior
   if (mutating > 0) { syncWanted = true; return; }
@@ -1189,7 +1203,7 @@ function setLiveStatus(ok) {
 }
 
 function connectLive() {
-  if (!("EventSource" in window)) return;
+  if (!("EventSource" in window) || !state.user) return;
   clearTimeout(reconnectTimer);
   live?.close();
   live = new EventSource("/api/events");
@@ -1206,7 +1220,7 @@ function connectLive() {
     setLiveStatus(false);
     // si el servidor respondió con error (no solo un corte), el navegador
     // deja de reintentar por su cuenta: se reintenta aquí
-    if (live.readyState === EventSource.CLOSED) {
+    if (live.readyState === EventSource.CLOSED && state.user) {
       clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(connectLive, 5000);
     }
@@ -1216,16 +1230,184 @@ function connectLive() {
 // Al volver a la pestaña o desbloquear el celular
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  if (!state.user) return;
   requestSync();
   if (!live || live.readyState === EventSource.CLOSED) connectLive();
 });
-window.addEventListener("online", () => { requestSync(); connectLive(); });
+window.addEventListener("online", () => { if (state.user) { requestSync(); connectLive(); } });
 
 // Respaldo: por si la conexión en vivo falla sin que el navegador lo note
 setInterval(() => {
   if (document.visibilityState === "visible") requestSync();
 }, 30000);
 
-readUrl();
-refresh();
-connectLive();
+// ---------- Cuenta: inicio de sesión ----------
+state.user = null;
+const authForm = $("#auth-form");
+let authMode = "login";  // "login" | "register"
+let authConfig = { allow_signup: true, has_users: true };
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const first = !authConfig.has_users;
+  const register = mode === "register";
+  $("#auth-title").textContent = first ? "Crea tu cuenta" : register ? "Crear cuenta" : "Iniciar sesión";
+  const intro = $("#auth-intro");
+  intro.hidden = !first;
+  intro.textContent = first ? "Es la primera cuenta: las notas que ya existen quedarán en ella." : "";
+  $("#auth-submit").textContent = register ? "Crear cuenta" : "Entrar";
+  $("#auth-pass").autocomplete = register ? "new-password" : "current-password";
+  const hint = $("#auth-hint");
+  hint.hidden = !register;
+  hint.textContent = "Usuario: letras sin tilde, números, punto o guion (3 a 30). Contraseña: al menos 8 caracteres.";
+  // cambiar entre entrar y crear cuenta (no hay registro si está cerrado)
+  const row = $("#auth-switch-row");
+  row.hidden = first || (!register && !authConfig.allow_signup);
+  $("#auth-switch-text").textContent = register ? "¿Ya tienes cuenta?" : "¿No tienes cuenta?";
+  $("#auth-switch").textContent = register ? "Inicia sesión" : "Crea una";
+  $("#auth-error").hidden = true;
+}
+
+async function showAuth(message = "") {
+  try {
+    authConfig = await api("/auth/config");
+  } catch { /* se intenta igual */ }
+  setAuthMode(authConfig.has_users ? "login" : "register");
+  document.body.classList.add("is-locked");
+  $("#auth").hidden = false;
+  if (message) {
+    $("#auth-error").textContent = message;
+    $("#auth-error").hidden = false;
+  }
+  $("#auth-user").focus();
+}
+
+function startApp(username) {
+  state.user = username;
+  $("#account-name").textContent = username;
+  $("#password-user").value = username;
+  $("#auth").hidden = true;
+  document.body.classList.remove("is-locked");
+  $("#auth-pass").value = "";
+  readUrl();
+  refresh();
+  connectLive();
+}
+
+// Cierra la vista de notas (sesión cerrada o vencida) sin dejar datos a la vista
+function lockApp(message = "") {
+  state.user = null;
+  live?.close();
+  live = null;
+  clearTimeout(reconnectTimer);
+  setLiveStatus(true);
+  for (const dlg of [editor, detail, $("#password-dialog")]) if (dlg.open) dlg.close();
+  closeMenu(false);
+  state.notes = [];
+  state.meta = { tags: [], priorities: [], days: [], assignees: [], due_days: [] };
+  state.hidden.clear();
+  state.expanded.clear();
+  state.loaded = false;
+  fill($("#tickets"));
+  hideToast();
+  showAuth(message);
+}
+
+authForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = $("#auth-user").value.trim();
+  const password = $("#auth-pass").value;
+  const err = $("#auth-error");
+  if (!username || !password) {
+    err.textContent = "Escribe tu usuario y tu contraseña.";
+    err.hidden = false;
+    return;
+  }
+  const btn = $("#auth-submit");
+  btn.disabled = true;
+  try {
+    const path = authMode === "register" ? "/auth/register" : "/auth/login";
+    const me = await api(path, { method: "POST", body: JSON.stringify({ username, password }) });
+    startApp(me.username);
+  } catch (ex) {
+    err.textContent = ex.status === 422 && authMode === "login" ? "Usuario o contraseña incorrectos." : ex.message;
+    err.hidden = false;
+    $("#auth-pass").select();
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#auth-switch").addEventListener("click", () => {
+  setAuthMode(authMode === "login" ? "register" : "login");
+  $("#auth-user").focus();
+});
+
+// Mostrar u ocultar la contraseña
+for (const btn of document.querySelectorAll(".pass-toggle")) {
+  btn.addEventListener("click", () => {
+    const input = document.getElementById(btn.getAttribute("aria-controls"));
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.textContent = show ? "Ocultar" : "Mostrar";
+    btn.setAttribute("aria-pressed", String(show));
+    input.focus();
+  });
+}
+
+$("#logout").addEventListener("click", async () => {
+  flushDeletes();
+  try { await api("/auth/logout", { method: "POST" }); } catch { /* igual se cierra */ }
+  lockApp();
+});
+
+// ---------- Cambiar contraseña ----------
+const passDialog = $("#password-dialog");
+$("#change-pass").addEventListener("click", () => {
+  $("#password-form").reset();
+  $("#password-user").value = state.user;
+  $("#password-error").hidden = true;
+  closeMenu(false);
+  passDialog.showModal();
+  $("#pass-current").focus();
+});
+for (const id of ["#password-close", "#password-cancel"]) $(id).addEventListener("click", () => passDialog.close());
+passDialog.addEventListener("click", (e) => { if (e.target === passDialog) passDialog.close(); });
+$("#password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = $("#password-error");
+  const current = $("#pass-current").value;
+  const next = $("#pass-new").value;
+  if (next.length < 8) {
+    err.textContent = "La contraseña nueva debe tener al menos 8 caracteres.";
+    err.hidden = false;
+    return;
+  }
+  try {
+    await api("/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) });
+    passDialog.close();
+    toast("Contraseña cambiada. Se cerró la sesión en tus otros dispositivos.");
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+  }
+});
+
+// ---------- Arranque ----------
+async function boot() {
+  try {
+    const me = await api("/auth/me");
+    startApp(me.username);
+  } catch (ex) {
+    if (ex.status === 401) showAuth();
+    else {
+      document.body.classList.add("is-locked");
+      $("#auth").hidden = false;
+      fill($("#auth-error"), "No se pudo conectar con el servidor. Revisa que los contenedores estén en marcha.");
+      $("#auth-error").hidden = false;
+      setTimeout(boot, 5000);
+    }
+  }
+}
+
+boot();

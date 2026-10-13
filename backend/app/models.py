@@ -18,10 +18,37 @@ class Base(DeclarativeBase):
 # Si cambias un modelo, crea una migración nueva; no basta con editar esta clase.
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(30), unique=True, index=True)  # en minúsculas
+    password_hash: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserSession(Base):
+    """Sesión iniciada en un dispositivo. Solo se guarda el hash del token."""
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    user_agent: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    user: Mapped[User] = relationship(lazy="joined")
+
+
 class Note(Base):
     __tablename__ = "notes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # dueño; NULL solo para notas anteriores a los usuarios, aún sin reclamar
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_notes_user_id"), nullable=True, index=True,
+    )
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text, default="")
     raw: Mapped[str] = mapped_column(Text)  # texto original, para poder editarlo

@@ -12,7 +12,7 @@ Requisitos: Docker Desktop (o Docker Engine con el plugin `compose`).
 docker compose up --build -d
 ```
 
-Abre **http://localhost:8080**. La documentación interactiva de la API está en http://localhost:8080/api/docs.
+Abre **http://localhost:8080** y crea tu cuenta. **La primera cuenta que se crea recibe todas las notas que ya existían**, así que crea la tuya antes que nadie. La documentación interactiva de la API está en http://localhost:8080/api/docs.
 
 Comandos útiles:
 
@@ -21,6 +21,29 @@ docker compose ps            # ver el estado de los contenedores
 docker compose logs -f api   # ver los logs del backend
 docker compose down          # apagar (las notas se conservan)
 docker compose down -v       # apagar y BORRAR todas las notas
+```
+
+## Cuentas
+
+- Cada usuario tiene su propio tablero: solo ve y modifica sus notas, y los avisos en vivo solo llegan a sus dispositivos.
+- La sesión dura 30 días por dispositivo y se renueva sola mientras uses la app. **Cerrar sesión** y **Cambiar contraseña** están al final del menú; cambiar la contraseña cierra la sesión en los demás dispositivos.
+- Las contraseñas se guardan con hash scrypt y las sesiones como hash SHA-256: una copia de la base no permite entrar.
+- Tras 5 intentos fallidos de inicio de sesión desde la misma IP para un usuario, hay que esperar 10 minutos.
+- Para que nadie más pueda crear cuentas, pon `ALLOW_SIGNUP=false` en `.env` y ejecuta `docker compose up -d`.
+- La app funciona por http en la red local, así que las contraseñas viajan sin cifrar dentro de tu wifi. Si algún día la expones fuera de casa, ponla detrás de https y usa `COOKIE_SECURE=true`.
+
+## Respaldo automático
+
+El servicio `backup` saca una copia de la base al arrancar y luego cada 24 horas, en la carpeta `respaldos/` del proyecto (por ejemplo `notas-2026-10-13_0300.sql.gz`), y conserva las 14 más recientes. Se ajusta con `BACKUP_INTERVAL_HOURS` y `BACKUP_KEEP` en `.env`. La carpeta no se sube a git.
+
+Para restaurar un respaldo (reemplaza todas las notas actuales):
+
+```bash
+docker compose stop api
+docker compose exec db psql -U notas -d postgres -c "DROP DATABASE notas WITH (FORCE)" -c "CREATE DATABASE notas"
+docker compose cp respaldos/notas-2026-10-13_0300.sql.gz db:/tmp/r.sql.gz
+docker compose exec db sh -c "gunzip -c /tmp/r.sql.gz | psql -U notas -d notas"
+docker compose start api
 ```
 
 ## Formato de una nota
@@ -93,13 +116,16 @@ Todas las pantallas abiertas (PC, celular, otras pestañas) se actualizan solas 
 
 ```
 navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) ──► db (PostgreSQL 16)
-                 sirve el frontend                                    └─ volumen notas_data
+                 sirve el frontend                                    ├─ volumen notas_data
+                                                       backup ────────┘─► carpeta respaldos/
 ```
 
 ```
 .
 ├── docker-compose.yml
 ├── .env                    # credenciales y puerto (no subir a git)
+├── backup/backup.sh        # respaldo automático
+├── respaldos/              # copias de la base (no se sube a git)
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
@@ -109,6 +135,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 │   │   ├── migrate.py      # aplica las migraciones al arrancar
 │   │   ├── migrations/     # migraciones de Alembic
 │   │   ├── events.py       # avisos en vivo entre dispositivos
+│   │   ├── auth.py         # cuentas, contraseñas y sesiones
 │   │   └── parser.py       # interpreta el texto con #, @ y $
 │   └── tests/test_parser.py
 └── frontend/
@@ -129,6 +156,12 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 | POST | `/api/parse` `{raw}` | Vista previa sin guardar |
 | GET | `/api/meta?month=YYYY-MM` | Etiquetas, prioridades, responsables, días con notas y días con vencimientos |
 | GET | `/api/events` | Avisos en vivo de cambios (Server-Sent Events) |
+| GET | `/api/auth/config` | Si se pueden crear cuentas y si ya existe alguna |
+| POST | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Crear cuenta, entrar y salir (`{username, password}`) |
+| GET | `/api/auth/me` | Usuario de la sesión actual |
+| POST | `/api/auth/password` `{current, new}` | Cambiar contraseña |
+
+Todos los endpoints de notas requieren sesión; una nota de otro usuario responde 404 como si no existiera.
 
 ## Migraciones de la base de datos
 

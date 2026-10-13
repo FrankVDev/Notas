@@ -7,8 +7,34 @@
   <link rel="preload" href="fonts/barlow-semi-condensed-700.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="is-locked">
   <div id="progress" class="progress" hidden></div>
+
+  <!-- Inicio de sesión / creación de cuenta -->
+  <main id="auth" class="auth" hidden>
+    <div class="auth-card">
+      <h1 class="brand">Notas</h1>
+      <h2 id="auth-title" class="auth-title">Iniciar sesión</h2>
+      <p id="auth-intro" class="auth-intro" hidden></p>
+      <form id="auth-form" novalidate>
+        <label for="auth-user">Usuario</label>
+        <input id="auth-user" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="30" required>
+        <label for="auth-pass">Contraseña</label>
+        <div class="pass-field">
+          <input id="auth-pass" type="password" name="password" autocomplete="current-password" maxlength="200" required>
+          <button type="button" class="link-btn pass-toggle" aria-controls="auth-pass" aria-pressed="false">Mostrar</button>
+        </div>
+        <p id="auth-hint" class="auth-hint" hidden></p>
+        <p id="auth-error" class="form-error" role="alert" hidden></p>
+        <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Entrar</button>
+      </form>
+      <p id="auth-switch-row" class="auth-switch">
+        <span id="auth-switch-text"></span>
+        <button type="button" class="link-btn" id="auth-switch"></button>
+      </p>
+    </div>
+  </main>
+
   <div class="app">
     <aside class="menu" id="menu" aria-label="Menú">
       <div class="menu-top">
@@ -27,6 +53,14 @@
           <button id="clear-filters" class="link-btn" type="button" hidden>Limpiar</button>
         </div>
         <div id="filters"></div>
+      </section>
+
+      <section class="account" aria-label="Cuenta">
+        <p class="account-name">Sesión: <b id="account-name"></b></p>
+        <div class="account-actions">
+          <button type="button" class="link-btn" id="change-pass">Cambiar contraseña</button>
+          <button type="button" class="link-btn" id="logout">Cerrar sesión</button>
+        </div>
       </section>
     </aside>
 
@@ -100,6 +134,27 @@ $Alta
   <!-- Detalle de la nota -->
   <dialog id="detail" class="sheet" aria-labelledby="detail-title">
     <div class="sheet-inner" id="detail-body"></div>
+  </dialog>
+
+  <!-- Cambiar contraseña -->
+  <dialog id="password-dialog" class="sheet" aria-labelledby="password-title">
+    <form class="sheet-inner" id="password-form" novalidate>
+      <header class="sheet-head">
+        <h2 id="password-title">Cambiar contraseña</h2>
+        <button type="button" class="icon-btn" aria-label="Cerrar" id="password-close">&times;</button>
+      </header>
+      <input type="text" name="username" autocomplete="username" id="password-user" hidden>
+      <label for="pass-current">Contraseña actual</label>
+      <input id="pass-current" type="password" autocomplete="current-password" maxlength="200" required>
+      <label for="pass-new">Contraseña nueva</label>
+      <input id="pass-new" type="password" autocomplete="new-password" minlength="8" maxlength="200" required>
+      <p class="auth-hint">Al menos 8 caracteres. Se cerrará la sesión en tus otros dispositivos.</p>
+      <p id="password-error" class="form-error" role="alert" hidden></p>
+      <footer class="sheet-foot">
+        <button type="button" class="btn" id="password-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar</button>
+      </footer>
+    </form>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite">

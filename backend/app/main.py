@@ -9,13 +9,15 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import exists, func, literal, or_, select, text
+from sqlalchemy import delete, exists, func, literal, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from . import auth
+from .auth import current_user, get_db
 from .events import broker
 from .migrate import upgrade_database
-from .models import Note, SessionLocal, Task, engine
+from .models import Note, Task, User, UserSession, engine
 from .parser import parse_note
 
 APP_TZ = os.environ.get("APP_TZ", "America/Lima")
@@ -61,16 +63,30 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Notas API", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
 
 
-def get_db():
-    with SessionLocal() as db:
-        yield db
-
-
 # Cada pestaña envía un id propio; así ignora los avisos de sus propios cambios
 ClientId = Header(default=None, alias="X-Client-Id", max_length=64)
 
 
 # ---------- Esquemas ----------
+
+class Credentials(BaseModel):
+    username: str = Field(max_length=60)
+    password: str = Field(max_length=200)
+
+
+class PasswordChange(BaseModel):
+    current: str = Field(max_length=200)
+    new: str = Field(max_length=200)
+
+
+class UserOut(BaseModel):
+    username: str
+
+
+class AuthConfig(BaseModel):
+    allow_signup: bool
+    has_users: bool
+
 
 class NoteIn(BaseModel):
     raw: str = Field(min_length=1, max_length=20000)
@@ -138,9 +154,10 @@ def to_out(n: Note) -> NoteOut:
     )
 
 
-def get_note_or_404(db: Session, note_id: int) -> Note:
+def get_note_or_404(db: Session, note_id: int, user: User) -> Note:
     note = db.get(Note, note_id)
-    if not note:
+    # una nota de otro usuario responde igual que una inexistente
+    if not note or note.user_id != user.id:
         raise HTTPException(404, "La nota no existe o fue eliminada.")
     return note
 
@@ -210,8 +227,81 @@ def health():
     return {"ok": True}
 
 
+# ---------- Cuentas ----------
+
+@app.get("/api/auth/config", response_model=AuthConfig)
+def auth_config(db: Session = Depends(get_db)):
+    has_users = db.scalar(select(func.count()).select_from(User)) > 0
+    # la primera cuenta siempre se puede crear, aunque el registro esté cerrado
+    return AuthConfig(allow_signup=auth.ALLOW_SIGNUP or not has_users, has_users=has_users)
+
+
+@app.post("/api/auth/register", response_model=UserOut, status_code=201)
+def register(body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)):
+    has_users = db.scalar(select(func.count()).select_from(User)) > 0
+    if has_users and not auth.ALLOW_SIGNUP:
+        raise HTTPException(403, "El registro de cuentas nuevas está cerrado.")
+    username = auth.normalize_username(body.username)
+    auth.validate_new_account(username, body.password)
+    if db.scalar(select(User).where(User.username == username)):
+        raise HTTPException(409, "Ese nombre de usuario ya existe.")
+    user = User(username=username, password_hash=auth.hash_password(body.password))
+    db.add(user)
+    db.flush()
+    if not has_users:
+        claimed = auth.claim_orphan_notes(db, user)
+        print(f"Primera cuenta '{username}': recibió {claimed} notas existentes.")
+    db.commit()
+    auth.start_session(db, user, request, response)
+    return UserOut(username=user.username)
+
+
+@app.post("/api/auth/login", response_model=UserOut)
+def login(body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)):
+    username = auth.normalize_username(body.username)
+    auth.check_rate_limit(request, username)
+    user = db.scalar(select(User).where(User.username == username))
+    password_ok = auth.verify_password(body.password, user.password_hash if user else auth._DUMMY_HASH)
+    if not user or not password_ok:
+        auth.record_failure(request, username)
+        raise HTTPException(401, "Usuario o contraseña incorrectos.")
+    auth.clear_failures(request, username)
+    auth.start_session(db, user, request, response)
+    return UserOut(username=user.username)
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout(request: Request, db: Session = Depends(get_db)):
+    response = Response(status_code=204)
+    auth.end_session(db, request, response)
+    return response
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+def me(user: User = Depends(current_user)):
+    return UserOut(username=user.username)
+
+
+@app.post("/api/auth/password", status_code=204)
+def change_password(
+    body: PasswordChange, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db),
+):
+    auth.check_rate_limit(request, user.username)
+    if not auth.verify_password(body.current, user.password_hash):
+        auth.record_failure(request, user.username)
+        raise HTTPException(403, "La contraseña actual no es correcta.")
+    auth.validate_new_account(user.username, body.new)
+    db_user = db.get(User, user.id)
+    db_user.password_hash = auth.hash_password(body.new)
+    # cierra las sesiones de los demás dispositivos; esta sigue abierta
+    token_hash = auth._token_hash(request.cookies.get(auth.COOKIE_NAME, ""))
+    db.execute(delete(UserSession).where(UserSession.user_id == user.id, UserSession.token_hash != token_hash))
+    db.commit()
+    return Response(status_code=204)
+
+
 @app.post("/api/parse", response_model=ParsedOut)
-def preview(body: NoteIn):
+def preview(body: NoteIn, user: User = Depends(current_user)):
     """Vista previa: interpreta el texto sin guardarlo."""
     p = parse_note(body.raw, local_today())
     return ParsedOut(
@@ -230,8 +320,9 @@ def list_notes(
     q: str | None = Query(None, max_length=100),
     assignee: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    stmt = select(Note)
+    stmt = select(Note).where(Note.user_id == user.id)
     if status == "active":
         # Cola FIFO: la primera que entró es la primera que sale
         stmt = stmt.where(Note.completed_at.is_(None)).order_by(Note.created_at.asc(), Note.id.asc())
@@ -258,79 +349,98 @@ def list_notes(
 
 
 @app.post("/api/notes", response_model=NoteOut, status_code=201)
-def create_note(body: NoteIn, db: Session = Depends(get_db), client: str | None = ClientId):
-    note = Note(raw=body.raw, title="", description="", tags=[])
+def create_note(
+    body: NoteIn, db: Session = Depends(get_db), client: str | None = ClientId, user: User = Depends(current_user),
+):
+    note = Note(raw=body.raw, title="", description="", tags=[], user_id=user.id)
     apply_raw(note, body.raw)
     db.add(note)
     db.commit()
     db.refresh(note)
-    broker.publish("created", note.id, client)
+    broker.publish(user.id, "created", note.id, client)
     return to_out(note)
 
 
 @app.get("/api/notes/{note_id}", response_model=NoteOut)
-def get_note(note_id: int, db: Session = Depends(get_db)):
-    return to_out(get_note_or_404(db, note_id))
+def get_note(note_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return to_out(get_note_or_404(db, note_id, user))
 
 
 @app.put("/api/notes/{note_id}", response_model=NoteOut)
-def update_note(note_id: int, body: NoteIn, db: Session = Depends(get_db), client: str | None = ClientId):
-    note = get_note_or_404(db, note_id)
+def update_note(
+    note_id: int, body: NoteIn, db: Session = Depends(get_db), client: str | None = ClientId,
+    user: User = Depends(current_user),
+):
+    note = get_note_or_404(db, note_id, user)
     apply_raw(note, body.raw)
     db.commit()
     db.refresh(note)
-    broker.publish("updated", note.id, client)
+    broker.publish(user.id, "updated", note.id, client)
     return to_out(note)
 
 
 @app.delete("/api/notes/{note_id}", status_code=204)
-def delete_note(note_id: int, db: Session = Depends(get_db), client: str | None = ClientId):
-    db.delete(get_note_or_404(db, note_id))
+def delete_note(
+    note_id: int, db: Session = Depends(get_db), client: str | None = ClientId, user: User = Depends(current_user),
+):
+    db.delete(get_note_or_404(db, note_id, user))
     db.commit()
-    broker.publish("deleted", note_id, client)
+    broker.publish(user.id, "deleted", note_id, client)
     return Response(status_code=204)
 
 
 @app.post("/api/notes/{note_id}/complete", response_model=NoteOut)
-def complete_note(note_id: int, db: Session = Depends(get_db), client: str | None = ClientId):
-    note = get_note_or_404(db, note_id)
+def complete_note(
+    note_id: int, db: Session = Depends(get_db), client: str | None = ClientId, user: User = Depends(current_user),
+):
+    note = get_note_or_404(db, note_id, user)
     if note.tasks:
         raise HTTPException(409, "Esta nota sale de la cola cuando marcas todos sus pendientes.")
     note.completed_at = datetime.now(timezone.utc)
     db.commit()
-    broker.publish("updated", note.id, client)
+    broker.publish(user.id, "updated", note.id, client)
     return to_out(note)
 
 
 @app.post("/api/notes/{note_id}/reopen", response_model=NoteOut)
-def reopen_note(note_id: int, db: Session = Depends(get_db), client: str | None = ClientId):
-    note = get_note_or_404(db, note_id)
+def reopen_note(
+    note_id: int, db: Session = Depends(get_db), client: str | None = ClientId, user: User = Depends(current_user),
+):
+    note = get_note_or_404(db, note_id, user)
     if note.tasks:
         raise HTTPException(409, "Desmarca algún pendiente para devolverla a la cola.")
     note.completed_at = None
     db.commit()
-    broker.publish("updated", note.id, client)
+    broker.publish(user.id, "updated", note.id, client)
     return to_out(note)
 
 
 @app.patch("/api/tasks/{task_id}", response_model=NoteOut)
-def toggle_task(task_id: int, body: TaskPatch, db: Session = Depends(get_db), client: str | None = ClientId):
+def toggle_task(
+    task_id: int, body: TaskPatch, db: Session = Depends(get_db), client: str | None = ClientId,
+    user: User = Depends(current_user),
+):
     task = db.get(Task, task_id)
-    if not task:
+    if not task or task.note.user_id != user.id:
         raise HTTPException(404, "El pendiente no existe.")
     task.done = body.done
     note = task.note
     sync_completion(note)
     db.commit()
     db.refresh(note)
-    broker.publish("updated", note.id, client)
+    broker.publish(user.id, "updated", note.id, client)
     return to_out(note)
 
 
 @app.get("/api/events")
 async def events(request: Request):
     """Conexión abierta por la que el servidor avisa de cada cambio."""
-    queue = broker.subscribe()
+    with auth.SessionLocal() as db:
+        user = auth.session_user(db, request)
+        user_id = user.id if user else None
+    if user_id is None:
+        raise HTTPException(401, "Inicia sesión para continuar.")
+    queue = broker.subscribe(user_id)
 
     async def stream():
         try:
@@ -354,21 +464,27 @@ async def events(request: Request):
 
 
 @app.get("/api/meta", response_model=MetaOut)
-def meta(month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"), db: Session = Depends(get_db)):
-    tags = db.scalars(select(func.unnest(Note.tags)).distinct()).all()
-    priorities = db.scalars(select(Note.priority).where(Note.priority.is_not(None)).distinct()).all()
-    assignees = db.scalars(select(Task.assignee).where(Task.assignee.is_not(None)).distinct()).all()
+def meta(
+    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"), db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    mine = Note.user_id == user.id
+    tags = db.scalars(select(func.unnest(Note.tags)).where(mine).distinct()).all()
+    priorities = db.scalars(select(Note.priority).where(mine, Note.priority.is_not(None)).distinct()).all()
+    assignees = db.scalars(
+        select(Task.assignee).join(Note, Task.note_id == Note.id).where(mine, Task.assignee.is_not(None)).distinct()
+    ).all()
     days: list[str] = []
     due_days: list[str] = []
     if month:
         day_expr = func.to_char(local_created, "YYYY-MM-DD")
         days = db.scalars(
-            select(day_expr).where(func.to_char(local_created, "YYYY-MM") == month).distinct()
+            select(day_expr).where(mine, func.to_char(local_created, "YYYY-MM") == month).distinct()
         ).all()
         due_expr = func.to_char(Note.due_date, "YYYY-MM-DD")
         due_days = db.scalars(
             select(due_expr).where(
-                Note.completed_at.is_(None), func.to_char(Note.due_date, "YYYY-MM") == month,
+                mine, Note.completed_at.is_(None), func.to_char(Note.due_date, "YYYY-MM") == month,
             ).distinct()
         ).all()
     return MetaOut(
