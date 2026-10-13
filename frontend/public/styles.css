@@ -70,6 +70,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
   height: 100vh;
   overflow-y: auto;
 }
+.menu-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.menu-close, .filters-btn, .menu-backdrop { display: none; }
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.badge[hidden] { display: none; }
 .brand {
   margin: 0;
   font-size: 26px;
@@ -172,14 +188,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: 14px 16px 26px;
   font-family: var(--ticket);
   font-size: 15px;
-  cursor: pointer;
   /* borde inferior dentado, como papel arrancado de la comandera */
   -webkit-mask: radial-gradient(var(--tooth) at 50% 100%, #0000 97%, #000) 50% / calc(2 * var(--tooth)) 100%;
           mask: radial-gradient(var(--tooth) at 50% 100%, #0000 97%, #000) 50% / calc(2 * var(--tooth)) 100%;
-  transition: transform .15s ease;
 }
-.ticket:hover { transform: translateY(2px); }
-.ticket:focus-visible { outline-offset: -4px; }
+.ticket:has(.ticket-open:focus-visible) { box-shadow: inset 0 0 0 3px var(--accent); }
 
 .ticket-head {
   display: flex;
@@ -200,7 +213,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-radius: 4px;
   padding: 0 7px;
 }
-.ticket-title-row { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 12px; }
+.ticket-title-row { margin: 10px 0 12px; font-size: inherit; }
+.ticket-open {
+  all: unset;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  cursor: pointer;
+}
+/* área de toque: todo el ticket abre el detalle */
+.ticket-open::after { content: ""; position: absolute; inset: 0; }
+.ticket-open:focus-visible { outline: none; }
 .ticket-title {
   margin: 0;
   flex: 1;
@@ -215,10 +239,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border: 1.5px solid var(--ink);
   border-radius: 8px;
   padding: 6px 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
 }
+.pend-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pend-list { list-style: none; margin: 6px -6px 0; padding: 6px 0 0; border-top: 1px dashed #b7bec6; }
+.pend-more { margin: 2px 0 0; color: #5d6a77; font-size: 14px; }
 .pend-box b { font-size: 20px; }
 .pend-box small { color: #5d6a77; }
 .pend-box.is-clear { border-style: dashed; color: #5d6a77; }
@@ -240,6 +264,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .prio-otra { color: #3c4856; }
 
 .ticket.is-done { opacity: .78; }
+.ticket-wrap.is-leaving {
+  transition: opacity .4s ease, transform .4s ease;
+  opacity: 0;
+  transform: translateY(14px) rotate(-1.5deg);
+  pointer-events: none;
+}
 .ticket.is-done .ticket-title { text-decoration: line-through; text-decoration-thickness: 2px; }
 
 .board-empty {
@@ -338,11 +368,27 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* detalle */
 .detail-paper { background: var(--paper); color: var(--ink); border-radius: var(--radius); padding: 14px 16px; font-family: var(--ticket); font-size: 16px; }
 .detail-desc { white-space: pre-wrap; margin: 0 0 14px; }
-.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.checklist label { display: flex; gap: 10px; align-items: flex-start; padding: 5px 4px; border-radius: 6px; cursor: pointer; }
-.checklist label:hover { background: rgb(0 0 0 / 0.04); }
-.checklist input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); flex: none; }
-.checklist .done span { text-decoration: line-through; color: #7a858f; }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+/* casillas: por encima del área de toque del ticket */
+.check {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.check:hover { background: rgb(0 0 0 / 0.05); }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); flex: none; cursor: pointer; }
+.check span { transition: color .15s; }
+.check.done span { text-decoration: line-through; color: #7a858f; }
+@media (pointer: coarse) {
+  .check { min-height: 44px; align-items: center; }
+  .check input { width: 22px; height: 22px; margin: 0; }
+}
 .detail-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 14px; padding-top: 10px; border-top: 1px dashed #b7bec6; }
 .status-line { margin: 0; font-size: 15px; color: var(--muted); }
 
@@ -351,24 +397,96 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: fixed;
   left: 50%;
   bottom: 28px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 14px;
   transform: translate(-50%, 20px);
   background: var(--ink);
   color: #fff;
-  padding: 10px 16px;
-  border-radius: 8px;
+  padding: 8px 8px 8px 16px;
+  min-height: 48px;
+  border-radius: 10px;
   opacity: 0;
-  pointer-events: none;
-  transition: opacity .2s, transform .2s;
-  max-width: calc(100vw - 140px);
+  visibility: hidden;
+  transition: opacity .2s, transform .2s, visibility 0s linear .2s;
+  width: max-content;
+  max-width: min(520px, calc(100vw - 120px));
 }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition: opacity .2s, transform .2s; }
+.toast-action {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-height: 36px;
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+  font-weight: 600;
+}
+.toast-action:hover { background: rgb(255 255 255 / 0.24); }
+.toast-action[hidden] { display: none; }
+@media (prefers-color-scheme: dark) {
+  .toast { background: #e3e8ed; color: #1b2229; }
+  .toast-action { background: rgb(0 0 0 / 0.08); color: #1b2229; }
+}
+@media (max-width: 860px) {
+  /* en el celular el aviso va a la izquierda del botón + */
+  .toast { left: 16px; transform: translateY(20px); max-width: calc(100vw - 112px); }
+  .toast.show { transform: none; }
+}
+
+.progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.progress::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: var(--accent);
+  animation: progress 1s ease-in-out infinite;
+}
+.progress[hidden] { display: none; }
+@keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
-  .menu { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .calendar { max-width: 340px; }
-  .cal-day { aspect-ratio: auto; height: 32px; }
+  /* En pantallas chicas el menú es un panel lateral: los tickets se ven primero */
+  .menu {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 30;
+    width: min(330px, 88vw);
+    height: 100%;
+    border-right: 1px solid var(--line);
+    box-shadow: 8px 0 30px rgb(0 0 0 / 0.2);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform .22s ease, visibility 0s linear .22s;
+  }
+  .menu.is-open { transform: none; visibility: visible; transition: transform .22s ease; }
+  .menu-close { display: inline-block; }
+  .menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: rgb(20 28 36 / 0.45);
+  }
+  .menu-backdrop[hidden] { display: none; }
+  .filters-btn { display: inline-flex; align-items: center; margin-left: auto; min-height: 44px; }
+  .board-head { flex-wrap: wrap; }
+  .board-summary { order: 3; flex-basis: 100%; }
+  .cal-day { aspect-ratio: auto; min-height: 40px; }
   .board { padding: 20px 16px 110px; }
   .editor-grid { grid-template-columns: 1fr; }
   #editor-text { min-height: 240px; }

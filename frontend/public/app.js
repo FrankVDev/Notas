@@ -59,13 +59,49 @@ function fmtLong(iso) {
   return new Date(iso).toLocaleString("es", { dateStyle: "long", timeStyle: "short" });
 }
 
-let toastTimer;
-function toast(msg) {
-  const el = $("#toast");
-  el.textContent = msg;
-  el.classList.add("show");
+// Aviso inferior. Con `action` muestra un botón (p. ej. Deshacer) y dura más.
+const toastEl = $("#toast");
+let toastTimer = null;
+let toastRemaining = 0;
+let toastStartedAt = 0;
+
+function hideToast() {
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+  toastTimer = null;
+  toastEl.classList.remove("show");
+}
+function startToastTimer(ms) {
+  clearTimeout(toastTimer);
+  toastRemaining = ms;
+  toastStartedAt = Date.now();
+  toastTimer = setTimeout(hideToast, ms);
+}
+function toast(msg, { action = null, duration } = {}) {
+  $("#toast-msg").textContent = msg;
+  const btn = $("#toast-action");
+  btn.hidden = !action;
+  btn.onclick = null;
+  if (action) {
+    btn.textContent = action.label;
+    btn.onclick = () => { hideToast(); action.onClick(); };
+  }
+  toastEl.classList.add("show");
+  startToastTimer(duration ?? (action ? 7000 : 3500));
+}
+// El aviso no desaparece mientras el puntero o el foco están sobre él
+for (const ev of ["mouseenter", "focusin"]) {
+  toastEl.addEventListener(ev, () => {
+    if (!toastTimer) return;
+    clearTimeout(toastTimer);
+    toastRemaining -= Date.now() - toastStartedAt;
+  });
+}
+for (const ev of ["mouseleave", "focusout"]) {
+  toastEl.addEventListener(ev, () => {
+    if (toastEl.classList.contains("show") && !toastEl.contains(document.activeElement)) {
+      startToastTimer(Math.max(toastRemaining, 2000));
+    }
+  });
 }
 
 // ---------- Estado ----------
@@ -79,21 +115,51 @@ const state = {
   meta: { tags: [], priorities: [], days: [] },
   notes: [],
   editing: null,         // nota que se está editando (null = nueva)
+  detail: null,          // nota abierta en el detalle
+  hidden: new Set(),     // notas borradas que aún se pueden deshacer
+  loaded: false,
 };
+
+// Cada cambio local invalida las cargas que estaban en curso,
+// para que una respuesta vieja no pise lo que el usuario acaba de hacer.
+let viewSeq = 0;
 
 const hasFilters = () => Boolean(state.tag || state.priority || state.date);
 
 // ---------- Carga de datos ----------
+// Barra de progreso: solo aparece si la espera supera 300 ms
+let busyCount = 0;
+let busyTimer = null;
+function setBusy(on) {
+  busyCount += on ? 1 : -1;
+  const bar = $("#progress");
+  if (busyCount > 0 && !busyTimer && bar.hidden) {
+    busyTimer = setTimeout(() => { busyTimer = null; if (busyCount > 0) bar.hidden = false; }, 300);
+  } else if (busyCount === 0) {
+    clearTimeout(busyTimer);
+    busyTimer = null;
+    bar.hidden = true;
+  }
+  $(".board").setAttribute("aria-busy", String(busyCount > 0));
+}
+
 async function loadNotes() {
+  const seq = ++viewSeq;
   const q = new URLSearchParams({ status: state.status });
   if (state.tag) q.set("tag", state.tag);
   if (state.priority) q.set("priority", state.priority);
   if (state.date) q.set("date", state.date);
+  setBusy(true);
   try {
-    state.notes = await api(`/notes?${q}`);
+    const notes = await api(`/notes?${q}`);
+    if (seq !== viewSeq) return;
+    state.notes = notes.filter((n) => !state.hidden.has(n.id));
+    state.loaded = true;
     renderBoard();
   } catch (err) {
-    renderBoardError(err);
+    if (seq === viewSeq) renderBoardError(err);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -212,6 +278,11 @@ function renderFilters() {
   );
 
   $("#clear-filters").hidden = !hasFilters();
+  const active = [state.tag, state.priority, state.date].filter(Boolean).length;
+  const badge = $("#filters-badge");
+  badge.textContent = active;
+  badge.hidden = active === 0;
+  $("#open-menu").setAttribute("aria-label", active ? `Filtros, ${active} activos` : "Filtros");
 }
 
 function fmtDate(iso) {
@@ -226,38 +297,90 @@ $("#clear-filters").addEventListener("click", () => {
   loadNotes();
 });
 
+// ---------- Menú lateral en pantallas chicas ----------
+const menu = $("#menu");
+const mobileQuery = window.matchMedia("(max-width: 860px)");
+
+function setMenu(open) {
+  const isMobile = mobileQuery.matches;
+  menu.classList.toggle("is-open", open && isMobile);
+  $("#menu-backdrop").hidden = !(open && isMobile);
+  $("#open-menu").setAttribute("aria-expanded", String(open && isMobile));
+  // mientras el panel está abierto, el resto de la página no recibe foco
+  for (const el of [$(".board"), $("#new-note")]) el.inert = open && isMobile;
+  if (open && isMobile) $("#close-menu").focus();
+}
+const openMenu = () => setMenu(true);
+const closeMenu = (returnFocus = true) => {
+  const wasOpen = menu.classList.contains("is-open");
+  setMenu(false);
+  if (wasOpen && returnFocus) $("#open-menu").focus();
+};
+
+$("#open-menu").addEventListener("click", openMenu);
+$("#close-menu").addEventListener("click", () => closeMenu());
+$("#menu-backdrop").addEventListener("click", () => closeMenu());
+menu.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+mobileQuery.addEventListener("change", () => closeMenu(false));
+
 // ---------- Tablero ----------
+const MAX_TICKET_TASKS = 5;
+
+function checklistItem(note, task, scope) {
+  return h("li", {},
+    h("label", { class: `check${task.done ? " done" : ""}` },
+      h("input", {
+        type: "checkbox",
+        checked: task.done,
+        "data-focus-key": `${scope}-${task.id}`,
+        onchange: (e) => toggleTask(note.id, task.id, e.target.checked),
+      }),
+      h("span", {}, task.text)));
+}
+
 function ticket(note, isNext) {
   const done = Boolean(note.completed_at);
-  const open = () => openDetail(note.id);
+  const shown = note.tasks.slice(0, MAX_TICKET_TASKS);
+  const hiddenCount = note.tasks.length - shown.length;
 
   const pend = note.total === 0
     ? h("div", { class: "pend-box is-clear" }, "Sin pendientes")
     : h("div", { class: `pend-box${note.pending === 0 ? " is-clear" : ""}` },
-        h("span", {}, "Pendientes"),
-        h("span", {}, h("b", {}, note.pending), h("small", {}, ` / ${note.total}`)));
+        h("div", { class: "pend-head" },
+          h("span", {}, "Pendientes"),
+          h("span", {}, h("b", {}, note.pending), h("small", {}, ` / ${note.total}`))),
+        h("ul", { class: "pend-list", "aria-label": `Pendientes de ${note.title}` },
+          shown.map((t) => checklistItem(note, t, "t"))),
+        hiddenCount > 0 ? h("p", { class: "pend-more" }, `y ${hiddenCount} más`) : null);
 
-  return h("li", { class: "ticket-wrap" },
-    h("article", {
-      class: `ticket${done ? " is-done" : ""}`,
-      tabindex: "0",
-      role: "button",
-      "aria-label": `Nota ${note.id}: ${note.title}. ${note.pending} pendientes.`,
-      onclick: open,
-      onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } },
-    },
+  return h("li", { class: "ticket-wrap", "data-note-id": note.id },
+    h("article", { class: `ticket${done ? " is-done" : ""}` },
       h("header", { class: "ticket-head" },
         h("span", { class: "ticket-num" }, `N.º ${pad(note.id)}`),
         isNext ? h("span", { class: "ticket-next" }, "Sigue") : null,
         h("time", { datetime: note.created_at }, fmtStamp(note.created_at))),
-      h("div", { class: "ticket-title-row" },
-        h("h3", { class: "ticket-title" }, note.title),
-        h("span", { class: "ticket-arrow", "aria-hidden": "true" }, "→")),
+      h("h3", { class: "ticket-title-row" },
+        // el botón del título cubre todo el ticket (ver CSS), así se abre con un toque en cualquier parte
+        h("button", {
+          type: "button",
+          class: "ticket-open",
+          "data-focus-key": `o-${note.id}`,
+          onclick: () => openDetail(note.id),
+        },
+          h("span", { class: "ticket-title" }, note.title),
+          h("span", { class: "ticket-arrow", "aria-hidden": "true" }, "→"))),
       pend,
       h("div", { class: "ticket-meta" },
         note.tags.length ? h("div", { class: "ticket-tags" }, note.tags.map((t) => "@" + t).join("  ")) : null,
         note.priority ? h("div", { class: prioClass(note.priority) }, "$" + cap(note.priority)) : null),
     ));
+}
+
+// Vuelve a dibujar sin perder el elemento que tenía el foco
+function keepFocus(render) {
+  const key = document.activeElement?.dataset?.focusKey;
+  render();
+  if (key) document.querySelector(`[data-focus-key="${key}"]`)?.focus();
 }
 
 function renderBoard() {
@@ -268,11 +391,11 @@ function renderBoard() {
     ? (n === 1 ? "1 nota, en orden de llegada" : `${n} notas, en orden de llegada`)
     : (n === 1 ? "1 nota, la más reciente primero" : `${n} notas, la más reciente primero`);
 
-  fill($("#tickets"), ...state.notes.map((note, i) => ticket(note, active && i === 0 && !hasFilters())));
+  keepFocus(() => fill($("#tickets"), ...state.notes.map((note, i) => ticket(note, active && i === 0 && !hasFilters()))));
 
   const empty = $("#board-empty");
-  empty.hidden = n > 0;
-  if (n === 0) {
+  empty.hidden = n > 0 || !state.loaded;
+  if (n === 0 && state.loaded) {
     if (hasFilters()) {
       fill(empty,
         h("p", {}, "Ninguna nota coincide con estos filtros."),
@@ -286,6 +409,160 @@ function renderBoard() {
     }
   }
 }
+
+// ---------- Cambios con respuesta inmediata ----------
+const belongsToView = (note) => (state.status === "active" ? !note.completed_at : Boolean(note.completed_at));
+
+function sortNotes() {
+  if (state.status === "active") {
+    state.notes.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id);
+  } else {
+    state.notes.sort((a, b) => b.completed_at.localeCompare(a.completed_at));
+  }
+}
+
+// Saca un ticket del tablero con una breve animación
+function removeFromBoard(id) {
+  const li = document.querySelector(`.ticket-wrap[data-note-id="${id}"]`);
+  const hadFocus = li?.contains(document.activeElement);
+  const index = state.notes.findIndex((n) => n.id === id);
+  state.notes = state.notes.filter((n) => n.id !== id);
+
+  const finish = () => {
+    renderBoard();
+    if (hadFocus) {
+      // el foco pasa al ticket que ocupó su lugar, o al título del tablero
+      const next = document.querySelectorAll(".ticket-open")[Math.min(index, state.notes.length - 1)];
+      (next || $("#board-title")).focus();
+    }
+  };
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (li && !reduced) {
+    li.classList.add("is-leaving");
+    setTimeout(finish, 420);
+  } else {
+    finish();
+  }
+}
+
+// Aplica una versión nueva de una nota en el tablero y en el detalle
+function applyNote(note) {
+  const i = state.notes.findIndex((n) => n.id === note.id);
+  if (belongsToView(note)) {
+    if (i >= 0) state.notes[i] = note;
+    else state.notes.push(note);
+    sortNotes();
+    renderBoard();
+  } else if (i >= 0) {
+    // primero se ve el cambio (casilla marcada, contador en 0) y luego sale
+    state.notes[i] = note;
+    renderBoard();
+    removeFromBoard(note.id);
+  }
+  if (detail.open && state.detail?.id === note.id) keepFocus(() => renderDetail(note));
+}
+
+function findNote(id) {
+  return state.notes.find((n) => n.id === id) || (state.detail?.id === id ? state.detail : null);
+}
+
+// Calcula localmente cómo queda la nota, igual que el servidor
+function withTask(note, taskId, done) {
+  const tasks = note.tasks.map((t) => (t.id === taskId ? { ...t, done } : t));
+  const pending = tasks.filter((t) => !t.done).length;
+  let completed_at = note.completed_at;
+  if (tasks.length) completed_at = pending === 0 ? (note.completed_at || new Date().toISOString()) : null;
+  return { ...note, tasks, pending, completed_at };
+}
+
+async function toggleTask(noteId, taskId, done, known = null) {
+  // `known` sirve para deshacer cuando la nota ya no está en el tablero
+  const before = findNote(noteId) || known;
+  if (!before) return;
+  viewSeq++;  // descarta cargas en curso que traerían el estado anterior
+  applyNote(withTask(before, taskId, done));
+  try {
+    const saved = await api(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ done }) });
+    applyNote(saved);
+    if (!before.completed_at && saved.completed_at) {
+      toast(`"${saved.title}" salió de la cola.`, {
+        action: { label: "Deshacer", onClick: () => toggleTask(noteId, taskId, false, saved) },
+      });
+    } else if (before.completed_at && !saved.completed_at) {
+      toast(`"${saved.title}" volvió a la cola.`);
+    }
+    loadMeta();
+  } catch (e) {
+    applyNote(before);
+    toast(`No se guardó el cambio. ${e.message}`);
+  }
+}
+
+// Completar o reabrir notas sin pendientes
+async function setCompleted(note, complete) {
+  viewSeq++;
+  const optimistic = { ...note, completed_at: complete ? new Date().toISOString() : null };
+  applyNote(optimistic);
+  if (detail.open) detail.close();
+  try {
+    const saved = await api(`/notes/${note.id}/${complete ? "complete" : "reopen"}`, { method: "POST" });
+    applyNote(saved);
+    toast(complete ? `"${saved.title}" salió de la cola.` : `"${saved.title}" volvió a la cola.`, {
+      action: { label: "Deshacer", onClick: () => setCompleted(saved, !complete) },
+    });
+  } catch (e) {
+    applyNote(note);
+    toast(e.message);
+  }
+}
+
+// Borrado diferido: la nota desaparece al instante y se borra de verdad
+// cuando ya no se puede deshacer.
+const pendingDeletes = new Map();
+const UNDO_MS = 7000;
+
+function deleteNote(note) {
+  if (detail.open) detail.close();
+  state.hidden.add(note.id);
+  removeFromBoard(note.id);
+  const timer = setTimeout(() => commitDelete(note.id), UNDO_MS);
+  pendingDeletes.set(note.id, timer);
+  toast(`"${note.title}" eliminada.`, {
+    duration: UNDO_MS,
+    action: {
+      label: "Deshacer",
+      onClick: () => {
+        clearTimeout(pendingDeletes.get(note.id));
+        pendingDeletes.delete(note.id);
+        state.hidden.delete(note.id);
+        applyNote(note);
+        toast(`"${note.title}" restaurada.`);
+      },
+    },
+  });
+}
+
+async function commitDelete(id) {
+  pendingDeletes.delete(id);
+  try {
+    await api(`/notes/${id}`, { method: "DELETE" });
+    state.hidden.delete(id);
+    loadMeta();
+  } catch (e) {
+    state.hidden.delete(id);
+    toast(`No se pudo eliminar la nota. ${e.message}`);
+    loadNotes();
+  }
+}
+
+// Si se cierra la página con un borrado pendiente, se completa igual
+window.addEventListener("pagehide", () => {
+  for (const [id, timer] of pendingDeletes) {
+    clearTimeout(timer);
+    fetch(`/api/notes/${id}`, { method: "DELETE", keepalive: true });
+  }
+  pendingDeletes.clear();
+});
 
 function renderBoardError(err) {
   fill($("#tickets"));
@@ -386,7 +663,8 @@ const detail = $("#detail");
 
 async function openDetail(id) {
   try {
-    renderDetail(await api(`/notes/${id}`));
+    const note = await api(`/notes/${id}`);
+    renderDetail(note);
     if (!detail.open) detail.showModal();
   } catch (e) {
     toast(e.message);
@@ -395,36 +673,8 @@ async function openDetail(id) {
 }
 
 function renderDetail(note) {
+  state.detail = note;
   const done = Boolean(note.completed_at);
-
-  const toggle = async (task, checked) => {
-    try {
-      const updated = await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ done: checked }) });
-      renderDetail(updated);
-      if (!done && updated.completed_at) toast("Todos los pendientes listos: la nota salió de la cola.");
-      if (done && !updated.completed_at) toast("La nota volvió a la cola.");
-      refresh();
-    } catch (e) { toast(e.message); }
-  };
-
-  const action = async (path, msg) => {
-    try {
-      await api(path, { method: "POST" });
-      toast(msg);
-      detail.close();
-      refresh();
-    } catch (e) { toast(e.message); }
-  };
-
-  const remove = async () => {
-    if (!confirm(`¿Eliminar la nota "${note.title}"? No se puede deshacer.`)) return;
-    try {
-      await api(`/notes/${note.id}`, { method: "DELETE" });
-      toast("Nota eliminada.");
-      detail.close();
-      refresh();
-    } catch (e) { toast(e.message); }
-  };
 
   let status;
   if (done) status = `Completada el ${fmtLong(note.completed_at)}`;
@@ -442,10 +692,7 @@ function renderDetail(note) {
     h("div", { class: "detail-paper" },
       note.description ? h("p", { class: "detail-desc" }, note.description) : null,
       note.tasks.length
-        ? h("ul", { class: "checklist", "aria-label": "Pendientes" }, note.tasks.map((t) =>
-            h("li", {}, h("label", { class: t.done ? "done" : null },
-              h("input", { type: "checkbox", checked: t.done, onchange: (e) => toggle(t, e.target.checked) }),
-              h("span", {}, t.text)))))
+        ? h("ul", { class: "checklist", "aria-label": "Pendientes" }, note.tasks.map((t) => checklistItem(note, t, "d")))
         : null,
       (note.tags.length || note.priority)
         ? h("div", { class: "detail-meta" },
@@ -454,17 +701,19 @@ function renderDetail(note) {
         : null),
     h("p", { class: "status-line" }, status),
     h("footer", { class: "sheet-foot" },
-      h("button", { type: "button", class: "btn btn-danger", onclick: remove }, "Eliminar"),
+      h("button", { type: "button", class: "btn btn-danger", onclick: () => deleteNote(note) }, "Eliminar"),
       h("span", { class: "spacer" }),
       h("button", { type: "button", class: "btn", onclick: () => openEditor(note) }, "Editar"),
       note.total === 0 && !done
-        ? h("button", { type: "button", class: "btn btn-primary", onclick: () => action(`/notes/${note.id}/complete`, "Nota completada.") }, "Completar")
+        ? h("button", { type: "button", class: "btn btn-primary", onclick: () => setCompleted(note, true) }, "Completar")
         : null,
       note.total === 0 && done
-        ? h("button", { type: "button", class: "btn", onclick: () => action(`/notes/${note.id}/reopen`, "La nota volvió a la cola.") }, "Devolver a la cola")
+        ? h("button", { type: "button", class: "btn", onclick: () => setCompleted(note, false) }, "Devolver a la cola")
         : null),
   );
 }
+
+detail.addEventListener("close", () => { state.detail = null; });
 
 // Clic fuera del diálogo lo cierra
 for (const dlg of [editor, detail]) {
@@ -474,7 +723,7 @@ for (const dlg of [editor, detail]) {
 // Atajo: N abre una nota nueva
 document.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "n" && !e.ctrlKey && !e.metaKey && !e.altKey
-      && !editor.open && !detail.open && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+      && !editor.open && !detail.open && !menu.classList.contains("is-open") && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
     e.preventDefault();
     openEditor();
   }
