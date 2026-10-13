@@ -32,6 +32,21 @@ docker compose down -v       # apagar y BORRAR todas las notas
 - Para que nadie más pueda crear cuentas, pon `ALLOW_SIGNUP=false` en `.env` y ejecuta `docker compose up -d`.
 - La app funciona por http en la red local, así que las contraseñas viajan sin cifrar dentro de tu wifi. Si algún día la expones fuera de casa, ponla detrás de https y usa `COOKIE_SECURE=true`.
 
+## Administrar cuentas
+
+Desde la carpeta del proyecto, en la PC donde corre Docker:
+
+| Comando | Qué hace |
+|---|---|
+| `docker compose exec api python -m app.admin usuarios` | Lista las cuentas con sus notas en cola y completadas, sesiones abiertas y último ingreso |
+| `docker compose exec api python -m app.admin sesiones ana` | Muestra en qué dispositivos tiene sesión abierta |
+| `docker compose exec api python -m app.admin crear ana` | Crea una cuenta (pide la contraseña; con `--generar` crea una aleatoria). Útil con `ALLOW_SIGNUP=false` |
+| `docker compose exec api python -m app.admin restablecer ana` | Para una contraseña olvidada: genera una temporal, la muestra y cierra todas sus sesiones (`--elegir` para escribirla) |
+| `docker compose exec api python -m app.admin cerrar-sesiones ana` | Obliga a iniciar sesión de nuevo en todos sus dispositivos |
+| `docker compose exec api python -m app.admin borrar ana` | Borra la cuenta y **todas sus notas** (pide escribir el nombre para confirmar) |
+
+La lógica está en `backend/app/admin_service.py`, separada del comando (`admin.py`), para que una futura vista de administrador en la app pueda usar las mismas funciones desde la API.
+
 ## Respaldo automático
 
 El servicio `backup` saca una copia de la base al arrancar y luego cada 24 horas, en la carpeta `respaldos/` del proyecto (por ejemplo `notas-2026-10-13_0300.sql.gz`), y conserva las 14 más recientes. Se ajusta con `BACKUP_INTERVAL_HOURS` y `BACKUP_KEEP` en `.env`. La carpeta no se sube a git.
@@ -136,6 +151,8 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 │   │   ├── migrations/     # migraciones de Alembic
 │   │   ├── events.py       # avisos en vivo entre dispositivos
 │   │   ├── auth.py         # cuentas, contraseñas y sesiones
+│   │   ├── admin_service.py # operaciones de administración (reutilizables)
+│   │   ├── admin.py        # comando de terminal: python -m app.admin
 │   │   └── parser.py       # interpreta el texto con #, @ y $
 │   └── tests/test_parser.py
 └── frontend/

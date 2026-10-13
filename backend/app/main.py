@@ -13,7 +13,7 @@ from sqlalchemy import delete, exists, func, literal, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from . import auth
+from . import admin_service, auth
 from .auth import current_user, get_db
 from .events import broker
 from .migrate import upgrade_database
@@ -229,6 +229,10 @@ def health():
 
 # ---------- Cuentas ----------
 
+# Cómo se traducen los errores de admin_service a respuestas HTTP
+# (también servirá para los endpoints de una futura vista de administrador)
+ADMIN_HTTP_STATUS = {"not_found": 404, "conflict": 409, "invalid": 422}
+
 @app.get("/api/auth/config", response_model=AuthConfig)
 def auth_config(db: Session = Depends(get_db)):
     has_users = db.scalar(select(func.count()).select_from(User)) > 0
@@ -241,16 +245,13 @@ def register(body: Credentials, request: Request, response: Response, db: Sessio
     has_users = db.scalar(select(func.count()).select_from(User)) > 0
     if has_users and not auth.ALLOW_SIGNUP:
         raise HTTPException(403, "El registro de cuentas nuevas está cerrado.")
-    username = auth.normalize_username(body.username)
-    auth.validate_new_account(username, body.password)
-    if db.scalar(select(User).where(User.username == username)):
-        raise HTTPException(409, "Ese nombre de usuario ya existe.")
-    user = User(username=username, password_hash=auth.hash_password(body.password))
-    db.add(user)
-    db.flush()
+    try:
+        user = admin_service.create_user(db, body.username, body.password)
+    except admin_service.AdminError as e:
+        raise HTTPException(ADMIN_HTTP_STATUS[e.code], e.message) from None
     if not has_users:
         claimed = auth.claim_orphan_notes(db, user)
-        print(f"Primera cuenta '{username}': recibió {claimed} notas existentes.")
+        print(f"Primera cuenta '{user.username}': recibió {claimed} notas existentes.")
     db.commit()
     auth.start_session(db, user, request, response)
     return UserOut(username=user.username)
