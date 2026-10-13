@@ -1,0 +1,10 @@
+Las fuentes de esta carpeta se distribuyen bajo la SIL Open Font License 1.1
+(https://openfontlicense.org), que permite usarlas, incluirlas y redistribuirlas
+libremente, incluso en proyectos comerciales.
+
+- Barlow Semi Condensed, Copyright 2017 The Barlow Project Authors
+  https://github.com/jpt/barlow
+- Courier Prime, Copyright 2015 The Courier Prime Project Authors
+  https://github.com/quoteunquoteapps/CourierPrime
+
+Descargadas de Google Fonts, subconjunto latino (incluye tildes y ñ).

@@ -117,6 +117,7 @@ const state = {
   editing: null,         // nota que se está editando (null = nueva)
   detail: null,          // nota abierta en el detalle
   hidden: new Set(),     // notas borradas que aún se pueden deshacer
+  expanded: new Set(),   // tickets con la lista de pendientes abierta (por defecto, contraídos)
   loaded: false,
 };
 
@@ -343,15 +344,28 @@ function ticket(note, isNext) {
   const shown = note.tasks.slice(0, MAX_TICKET_TASKS);
   const hiddenCount = note.tasks.length - shown.length;
 
+  const expanded = state.expanded.has(note.id);
+  const listId = `pend-${note.id}`;
   const pend = note.total === 0
     ? h("div", { class: "pend-box is-clear" }, "Sin pendientes")
     : h("div", { class: `pend-box${note.pending === 0 ? " is-clear" : ""}` },
-        h("div", { class: "pend-head" },
-          h("span", {}, "Pendientes"),
-          h("span", {}, h("b", {}, note.pending), h("small", {}, ` / ${note.total}`))),
-        h("ul", { class: "pend-list", "aria-label": `Pendientes de ${note.title}` },
-          shown.map((t) => checklistItem(note, t, "t"))),
-        hiddenCount > 0 ? h("p", { class: "pend-more" }, `y ${hiddenCount} más`) : null);
+        h("button", {
+          type: "button",
+          class: "pend-toggle",
+          "aria-expanded": String(expanded),
+          "aria-controls": listId,
+          "aria-label": `Pendientes de ${note.title}: ${note.pending} de ${note.total}. ${expanded ? "Ocultar" : "Mostrar"} lista`,
+          "data-focus-key": `p-${note.id}`,
+          onclick: () => toggleExpanded(note.id),
+        },
+          h("span", { class: "pend-label" }, "Pendientes"),
+          h("span", {}, h("b", {}, note.pending), h("small", {}, ` / ${note.total}`)),
+          h("span", { class: "pend-chevron", "aria-hidden": "true" })),
+        expanded
+          ? h("ul", { class: "pend-list", id: listId, "aria-label": `Pendientes de ${note.title}` },
+              shown.map((t) => checklistItem(note, t, "t")))
+          : null,
+        expanded && hiddenCount > 0 ? h("p", { class: "pend-more" }, `y ${hiddenCount} más en el detalle`) : null);
 
   return h("li", { class: "ticket-wrap", "data-note-id": note.id },
     h("article", { class: `ticket${done ? " is-done" : ""}` },
@@ -374,6 +388,12 @@ function ticket(note, isNext) {
         note.tags.length ? h("div", { class: "ticket-tags" }, note.tags.map((t) => "@" + t).join("  ")) : null,
         note.priority ? h("div", { class: prioClass(note.priority) }, "$" + cap(note.priority)) : null),
     ));
+}
+
+function toggleExpanded(id) {
+  if (state.expanded.has(id)) state.expanded.delete(id);
+  else state.expanded.add(id);
+  renderBoard();
 }
 
 // Vuelve a dibujar sin perder el elemento que tenía el foco
