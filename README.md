@@ -56,6 +56,9 @@ Ctrl + Enter guarda la nota.
 - Si una nota no tiene pendientes, se completa con el botón **Completar**.
 - Al desmarcar un pendiente o agregar uno nuevo al editar, la nota vuelve a la cola en su lugar original (conserva su fecha de llegada).
 - El calendario filtra por fecha de creación; los días con un punto tienen notas.
+- Los pendientes se marcan directamente en el ticket; tocar cualquier otra parte del ticket abre el detalle.
+- Al completar o eliminar una nota aparece un aviso con **Deshacer** durante unos segundos. La nota eliminada se borra de verdad cuando ese aviso desaparece.
+- En el celular, el calendario y los filtros están en el panel que abre el botón **Filtros**.
 
 ## Arquitectura
 

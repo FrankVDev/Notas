@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="progress" class="progress" hidden></div>
   <div class="app">
     <aside class="menu" id="menu" aria-label="Menú">
       <div class="menu-top">
@@ -34,7 +35,7 @@
     <main class="board">
       <header class="board-head">
         <h2 id="board-title" tabindex="-1">En cola</h2>
-        <p id="board-summary" class="board-summary"></p>
+        <p id="board-summary" class="board-summary">Cargando notas…</p>
         <button id="open-menu" class="btn filters-btn" type="button" aria-controls="menu" aria-expanded="false">
           Filtros<span id="filters-badge" class="badge" hidden></span>
         </button>
@@ -93,7 +94,10 @@ $Alta"></textarea>
     <div class="sheet-inner" id="detail-body"></div>
   </dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite">
+    <span id="toast-msg"></span>
+    <button id="toast-action" class="toast-action" type="button" hidden></button>
+  </div>
 
   <script src="app.js"></script>
 </body>
