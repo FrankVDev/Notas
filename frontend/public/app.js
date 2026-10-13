@@ -212,6 +212,11 @@ function renderFilters() {
   );
 
   $("#clear-filters").hidden = !hasFilters();
+  const active = [state.tag, state.priority, state.date].filter(Boolean).length;
+  const badge = $("#filters-badge");
+  badge.textContent = active;
+  badge.hidden = active === 0;
+  $("#open-menu").setAttribute("aria-label", active ? `Filtros, ${active} activos` : "Filtros");
 }
 
 function fmtDate(iso) {
@@ -225,6 +230,32 @@ $("#clear-filters").addEventListener("click", () => {
   renderFilters();
   loadNotes();
 });
+
+// ---------- Menú lateral en pantallas chicas ----------
+const menu = $("#menu");
+const mobileQuery = window.matchMedia("(max-width: 860px)");
+
+function setMenu(open) {
+  const isMobile = mobileQuery.matches;
+  menu.classList.toggle("is-open", open && isMobile);
+  $("#menu-backdrop").hidden = !(open && isMobile);
+  $("#open-menu").setAttribute("aria-expanded", String(open && isMobile));
+  // mientras el panel está abierto, el resto de la página no recibe foco
+  for (const el of [$(".board"), $("#new-note")]) el.inert = open && isMobile;
+  if (open && isMobile) $("#close-menu").focus();
+}
+const openMenu = () => setMenu(true);
+const closeMenu = (returnFocus = true) => {
+  const wasOpen = menu.classList.contains("is-open");
+  setMenu(false);
+  if (wasOpen && returnFocus) $("#open-menu").focus();
+};
+
+$("#open-menu").addEventListener("click", openMenu);
+$("#close-menu").addEventListener("click", () => closeMenu());
+$("#menu-backdrop").addEventListener("click", () => closeMenu());
+menu.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+mobileQuery.addEventListener("change", () => closeMenu(false));
 
 // ---------- Tablero ----------
 function ticket(note, isNext) {
@@ -474,7 +505,7 @@ for (const dlg of [editor, detail]) {
 // Atajo: N abre una nota nueva
 document.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "n" && !e.ctrlKey && !e.metaKey && !e.altKey
-      && !editor.open && !detail.open && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+      && !editor.open && !detail.open && !menu.classList.contains("is-open") && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
     e.preventDefault();
     openEditor();
   }

@@ -70,6 +70,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
   height: 100vh;
   overflow-y: auto;
 }
+.menu-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.menu-close, .filters-btn, .menu-backdrop { display: none; }
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.badge[hidden] { display: none; }
 .brand {
   margin: 0;
   font-size: 26px;
@@ -366,9 +382,33 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
-  .menu { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .calendar { max-width: 340px; }
-  .cal-day { aspect-ratio: auto; height: 32px; }
+  /* En pantallas chicas el menú es un panel lateral: los tickets se ven primero */
+  .menu {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 30;
+    width: min(330px, 88vw);
+    height: 100%;
+    border-right: 1px solid var(--line);
+    box-shadow: 8px 0 30px rgb(0 0 0 / 0.2);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform .22s ease, visibility 0s linear .22s;
+  }
+  .menu.is-open { transform: none; visibility: visible; transition: transform .22s ease; }
+  .menu-close { display: inline-block; }
+  .menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: rgb(20 28 36 / 0.45);
+  }
+  .menu-backdrop[hidden] { display: none; }
+  .filters-btn { display: inline-flex; align-items: center; margin-left: auto; min-height: 44px; }
+  .board-head { flex-wrap: wrap; }
+  .board-summary { order: 3; flex-basis: 100%; }
+  .cal-day { aspect-ratio: auto; min-height: 40px; }
   .board { padding: 20px 16px 110px; }
   .editor-grid { grid-template-columns: 1fr; }
   #editor-text { min-height: 240px; }

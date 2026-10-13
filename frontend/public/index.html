@@ -11,8 +11,11 @@
 </head>
 <body>
   <div class="app">
-    <aside class="menu" aria-label="Menú">
-      <h1 class="brand">Notas</h1>
+    <aside class="menu" id="menu" aria-label="Menú">
+      <div class="menu-top">
+        <h1 class="brand">Notas</h1>
+        <button id="close-menu" class="btn menu-close" type="button">Ver notas</button>
+      </div>
 
       <section class="panel" aria-labelledby="cal-title">
         <h2 id="cal-title" class="panel-title">Calendario</h2>
@@ -30,13 +33,17 @@
 
     <main class="board">
       <header class="board-head">
-        <h2 id="board-title">En cola</h2>
+        <h2 id="board-title" tabindex="-1">En cola</h2>
         <p id="board-summary" class="board-summary"></p>
+        <button id="open-menu" class="btn filters-btn" type="button" aria-controls="menu" aria-expanded="false">
+          Filtros<span id="filters-badge" class="badge" hidden></span>
+        </button>
       </header>
       <ol id="tickets" class="tickets"></ol>
       <div id="board-empty" class="board-empty" hidden></div>
     </main>
   </div>
+  <div id="menu-backdrop" class="menu-backdrop" hidden></div>
 
   <button id="new-note" class="fab" type="button" aria-label="Nueva nota" title="Nueva nota (N)">
     <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
