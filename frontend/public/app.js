@@ -145,7 +145,40 @@ const state = {
 // para que una respuesta vieja no pise lo que el usuario acaba de hacer.
 let viewSeq = 0;
 
-const hasFilters = () => Boolean(state.tag || state.priority || state.date);
+state.q = "";  // texto de búsqueda
+
+// Filtros del panel lateral (calendario, prioridad, etiqueta)
+const panelFilterCount = () => [state.tag, state.priority, state.date].filter(Boolean).length;
+// Cualquier filtro, incluida la búsqueda
+const hasFilters = () => panelFilterCount() > 0 || Boolean(state.q);
+
+// ---------- Filtros en la URL ----------
+// La dirección refleja la vista actual: se puede recargar o guardar como marcador.
+function readUrl() {
+  const p = new URLSearchParams(location.search);
+  state.status = p.get("estado") === "completadas" ? "done" : "active";
+  state.tag = p.get("etiqueta") || null;
+  state.priority = p.get("prioridad") || null;
+  state.q = p.get("buscar") || "";
+  const date = p.get("fecha");
+  state.date = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : null;
+  if (state.date) {
+    const [y, m] = state.date.split("-").map(Number);
+    state.month = new Date(y, m - 1, 1);
+  }
+  $("#search").value = state.q;
+}
+
+function writeUrl() {
+  const p = new URLSearchParams();
+  if (state.status === "done") p.set("estado", "completadas");
+  if (state.tag) p.set("etiqueta", state.tag);
+  if (state.priority) p.set("prioridad", state.priority);
+  if (state.date) p.set("fecha", state.date);
+  if (state.q) p.set("buscar", state.q);
+  const target = p.toString() ? `?${p}` : "";
+  if (location.search !== target) history.replaceState(null, "", target || location.pathname);
+}
 
 // ---------- Carga de datos ----------
 // Barra de progreso: solo aparece si la espera supera 300 ms
@@ -170,6 +203,8 @@ async function loadNotes() {
   if (state.tag) q.set("tag", state.tag);
   if (state.priority) q.set("priority", state.priority);
   if (state.date) q.set("date", state.date);
+  if (state.q) q.set("q", state.q);
+  writeUrl();
   setBusy(true);
   try {
     const notes = await api(`/notes?${q}`);
@@ -298,8 +333,8 @@ function renderFilters() {
         : h("p", { class: "empty-hint" }, "Aparecen al escribir @etiqueta en una nota.")),
   );
 
-  $("#clear-filters").hidden = !hasFilters();
-  const active = [state.tag, state.priority, state.date].filter(Boolean).length;
+  const active = panelFilterCount();
+  $("#clear-filters").hidden = active === 0;
   const badge = $("#filters-badge");
   badge.textContent = active;
   badge.hidden = active === 0;
@@ -316,6 +351,37 @@ $("#clear-filters").addEventListener("click", () => {
   renderCalendar();
   renderFilters();
   loadNotes();
+});
+
+function clearAllFilters() {
+  state.q = "";
+  $("#search").value = "";
+  $("#clear-filters").click();
+}
+
+// ---------- Búsqueda ----------
+const searchInput = $("#search");
+let searchTimer = null;
+
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const q = searchInput.value.trim();
+    if (q === state.q) return;
+    state.q = q;
+    loadNotes();
+  }, 250);
+});
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (searchInput.value) {
+      searchInput.value = "";
+      searchInput.dispatchEvent(new Event("input"));
+    } else {
+      searchInput.blur();
+    }
+  }
 });
 
 // ---------- Menú lateral en pantallas chicas ----------
@@ -437,9 +503,20 @@ function renderBoard() {
   empty.hidden = n > 0 || !state.loaded;
   if (n === 0 && state.loaded) {
     if (hasFilters()) {
+      const where = active ? "en cola" : "completada";
+      const msg = state.q
+        ? `Ninguna nota ${where} contiene “${state.q}”${panelFilterCount() ? " con estos filtros" : ""}.`
+        : "Ninguna nota coincide con estos filtros.";
       fill(empty,
-        h("p", {}, "Ninguna nota coincide con estos filtros."),
-        h("button", { type: "button", class: "btn", onclick: () => $("#clear-filters").click() }, "Limpiar filtros"));
+        h("p", {}, msg),
+        h("div", { class: "empty-actions" },
+          state.q
+            ? h("button", {
+                type: "button", class: "btn",
+                onclick: () => { state.status = active ? "done" : "active"; renderFilters(); loadNotes(); },
+              }, active ? "Buscar en completadas" : "Buscar en la cola")
+            : null,
+          h("button", { type: "button", class: "btn", onclick: clearAllFilters }, "Limpiar todo")));
     } else if (active) {
       fill(empty,
         h("p", {}, "No hay notas en cola. Pulsa + para escribir la primera."));
@@ -624,6 +701,8 @@ let previewTimer;
 function openEditor(note = null) {
   state.editing = note;
   state.editingRemote = null;  // "updated" | "deleted" si cambió en otro dispositivo
+  suggestions = [];
+  $("#editor-suggest").hidden = true;
   $("#editor-remote").hidden = true;
   $("#editor-title").textContent = note ? `Editar nota N.º ${pad(note.id)}` : "Nueva nota";
   $("#editor-save").textContent = note ? "Guardar cambios" : "Guardar nota";
@@ -694,9 +773,117 @@ async function saveEditor() {
   }
 }
 
-editorText.addEventListener("input", () => { $("#editor-error").hidden = true; schedulePreview(); });
+// Inserta texto conservando el historial de deshacer (Ctrl + Z) del navegador
+function insertText(start, end, text) {
+  editorText.focus();
+  editorText.setSelectionRange(start, end);
+  if (!document.execCommand("insertText", false, text)) {
+    editorText.setRangeText(text, start, end, "end");
+  }
+  editorText.dispatchEvent(new Event("input"));
+}
+
+function currentLine() {
+  const v = editorText.value;
+  const pos = editorText.selectionStart;
+  const start = v.lastIndexOf("\n", pos - 1) + 1;
+  const nl = v.indexOf("\n", pos);
+  const end = nl === -1 ? v.length : nl;
+  return { start, end, pos, text: v.slice(start, end) };
+}
+
+// Botones # @ $: empiezan una línea nueva con el símbolo
+function insertMarker(sym) {
+  const line = currentLine();
+  if (line.text.trim() === "") insertText(line.start, line.end, sym);
+  else insertText(line.end, line.end, "\n" + sym);
+}
+for (const btn of document.querySelectorAll("[data-insert]")) {
+  btn.addEventListener("mousedown", (e) => e.preventDefault());  // no quitar el foco al texto
+  btn.addEventListener("click", () => insertMarker(btn.dataset.insert));
+}
+
+// Autocompletado de @etiquetas y $prioridad
+const fold = (t) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+let suggestions = [];
+
+function updateSuggestions() {
+  const box = $("#editor-suggest");
+  const line = currentLine();
+  const before = editorText.value.slice(line.start, line.pos);
+  const after = editorText.value.slice(line.pos, line.end);
+  const m = before.match(/^\s*([@$])(.*)$/);
+  suggestions = [];
+
+  if (m && after.trim() === "" && editorText === document.activeElement) {
+    const [, sym, typed] = m;
+    const t = fold(typed.trim());
+    let pool;
+    if (sym === "@") {
+      // etiquetas ya usadas en otras notas, sin las que ya tiene esta
+      const inNote = new Set();
+      let offset = 0;
+      for (const l of editorText.value.split("\n")) {
+        if (offset !== line.start && l.trim().startsWith("@")) inNote.add(fold(l.trim().slice(1).trim()));
+        offset += l.length + 1;
+      }
+      pool = state.meta.tags.filter((tag) => !inNote.has(fold(tag)));
+    } else {
+      pool = ["Alta", "Media", "Baja"];
+    }
+    suggestions = pool
+      .filter((v) => fold(v).includes(t) && fold(v) !== t)
+      .sort((a, b) => fold(b).startsWith(t) - fold(a).startsWith(t))
+      .slice(0, 6)
+      .map((v) => ({ sym, value: v }));
+  }
+
+  if (!suggestions.length) {
+    box.hidden = true;
+    fill(box);
+    return;
+  }
+  fill(box,
+    h("span", { class: "suggest-label" }, "Sugerencias:"),
+    suggestions.map((s, i) => h("button", {
+      type: "button",
+      class: `chip${i === 0 ? " is-first" : ""}`,
+      onmousedown: (e) => e.preventDefault(),
+      onclick: () => acceptSuggestion(s),
+    }, h("span", { class: "sym" }, s.sym), s.value)),
+    h("span", { class: "suggest-hint" }, "Tab para usar la primera"));
+  box.hidden = false;
+}
+
+function acceptSuggestion(s) {
+  const line = currentLine();
+  const indent = line.text.match(/^\s*/)[0];
+  insertText(line.start, line.end, `${indent}${s.sym}${s.value}`);
+  suggestions = [];
+  updateSuggestions();
+}
+
+editorText.addEventListener("input", () => {
+  $("#editor-error").hidden = true;
+  schedulePreview();
+  updateSuggestions();
+});
+editorText.addEventListener("click", updateSuggestions);
+editorText.addEventListener("keyup", (e) => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) updateSuggestions();
+});
+editorText.addEventListener("blur", () => setTimeout(updateSuggestions, 0));
 editorText.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveEditor(); }
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveEditor(); return; }
+  if (e.key === "Tab" && !e.shiftKey && suggestions.length) {
+    e.preventDefault();
+    acceptSuggestion(suggestions[0]);
+  } else if (e.key === "Escape" && suggestions.length) {
+    // Escape cierra primero las sugerencias, no el editor
+    e.preventDefault();
+    suggestions = [];
+    $("#editor-suggest").hidden = true;
+  }
 });
 $("#editor-save").addEventListener("click", saveEditor);
 $("#new-note").addEventListener("click", () => openEditor());
@@ -799,6 +986,12 @@ document.addEventListener("keydown", (e) => {
       && !editor.open && !detail.open && !menu.classList.contains("is-open") && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
     e.preventDefault();
     openEditor();
+  } else if (e.key === "/" && !e.ctrlKey && !e.metaKey && !editor.open && !detail.open
+      && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+    e.preventDefault();
+    if (menu.classList.contains("is-open")) closeMenu(false);
+    searchInput.focus();
+    searchInput.select();
   }
 });
 
@@ -899,5 +1092,6 @@ setInterval(() => {
   if (document.visibilityState === "visible") requestSync();
 }, 30000);
 
+readUrl();
 refresh();
 connectLive();

@@ -47,7 +47,12 @@ Reunion sobre contingencia, pendientes de planillas y Federacion
 $Alta
 ```
 
-Ctrl + Enter guarda la nota.
+Los botones **# Pendiente**, **@ Etiqueta** y **$ Prioridad** del editor insertan el símbolo al inicio de una línea (útil en el celular). Al escribir `@` se sugieren las etiquetas que ya usaste, y al escribir `$` las prioridades; **Tab** usa la primera sugerencia. Ctrl + Enter guarda la nota.
+
+## Buscar y filtrar
+
+- El campo **Buscar notas** (atajo: tecla `/`) encuentra notas por título, descripción, pendientes o etiquetas, sin distinguir mayúsculas ni tildes. Escape borra la búsqueda.
+- La dirección del navegador refleja la vista actual, por ejemplo `?etiqueta=Apolo&buscar=planillas`. Al recargar no se pierde y puedes guardarla como marcador.
 
 ## Cómo funciona la cola
 
@@ -100,7 +105,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 
 | Método | Ruta | Uso |
 |---|---|---|
-| GET | `/api/notes?status=active\|done\|all&tag=&priority=&date=YYYY-MM-DD` | Listar notas |
+| GET | `/api/notes?status=active\|done\|all&tag=&priority=&date=YYYY-MM-DD&q=` | Listar notas (`q` busca texto) |
 | POST | `/api/notes` `{raw}` | Crear nota desde el texto |
 | GET / PUT / DELETE | `/api/notes/{id}` | Ver, editar (re-interpreta el texto) o borrar |
 | PATCH | `/api/tasks/{id}` `{done}` | Marcar o desmarcar un pendiente |

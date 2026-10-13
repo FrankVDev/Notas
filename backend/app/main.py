@@ -8,8 +8,8 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import exists, func, literal, or_, select, text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .events import broker
@@ -17,6 +17,20 @@ from .models import Base, Note, SessionLocal, Task, engine
 from .parser import parse_note
 
 APP_TZ = os.environ.get("APP_TZ", "America/Lima")
+
+# La búsqueda ignora tildes si PostgreSQL tiene la extensión unaccent
+# (viene incluida en la imagen oficial; se activa al arrancar).
+SEARCH_UNACCENT = False
+
+
+def enable_unaccent() -> bool:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+        return True
+    except SQLAlchemyError:
+        print("Aviso: no se pudo activar unaccent; la búsqueda distinguirá tildes.")
+        return False
 
 
 @asynccontextmanager
@@ -30,6 +44,8 @@ async def lifespan(_: FastAPI):
             if attempt == 9:
                 raise
             time.sleep(2)
+    global SEARCH_UNACCENT
+    SEARCH_UNACCENT = enable_unaccent()
     broker.bind(asyncio.get_running_loop())
     yield
 
@@ -143,6 +159,27 @@ def apply_raw(note: Note, raw: str) -> None:
 local_created = func.timezone(APP_TZ, Note.created_at)
 
 
+def search_condition(q: str):
+    """Coincidencia en título, descripción, pendientes o etiquetas,
+    sin distinguir mayúsculas (ni tildes, si unaccent está activo)."""
+    def norm(expr):
+        expr = func.lower(expr)
+        return func.unaccent(expr) if SEARCH_UNACCENT else expr
+
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = norm(literal(f"%{escaped}%"))
+
+    def matches(column):
+        return norm(column).like(pattern, escape="\\")
+
+    return or_(
+        matches(Note.title),
+        matches(Note.description),
+        matches(func.array_to_string(Note.tags, " ")),
+        exists().where(Task.note_id == Note.id, matches(Task.text)),
+    )
+
+
 # ---------- Endpoints ----------
 
 @app.get("/api/health")
@@ -163,6 +200,7 @@ def list_notes(
     tag: str | None = None,
     priority: str | None = None,
     date: Date | None = None,
+    q: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ):
     stmt = select(Note)
@@ -180,6 +218,8 @@ def list_notes(
         stmt = stmt.where(Note.priority.is_(None) if priority == "ninguna" else Note.priority == priority)
     if date:
         stmt = stmt.where(func.date(local_created) == date)
+    if q and q.strip():
+        stmt = stmt.where(search_condition(q.strip()))
 
     return [to_out(n) for n in db.scalars(stmt).all()]
 

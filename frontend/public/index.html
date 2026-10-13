@@ -35,6 +35,12 @@
         <h2 id="board-title" tabindex="-1">En cola</h2>
         <p id="board-summary" class="board-summary">Cargando notas…</p>
         <p id="live-status" class="live-status" role="status" hidden>Sin conexión en vivo. Reintentando…</p>
+        <div class="search" role="search">
+          <label for="search" class="sr-only">Buscar notas</label>
+          <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m15.5 15.5 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input id="search" type="search" placeholder="Buscar notas" autocomplete="off" enterkeyhint="search" title="Buscar notas (/)">
+          <kbd class="search-key" aria-hidden="true">/</kbd>
+        </div>
         <button id="open-menu" class="btn filters-btn" type="button" aria-controls="menu" aria-expanded="false">
           Filtros<span id="filters-badge" class="badge" hidden></span>
         </button>
@@ -58,6 +64,11 @@
       </header>
       <div class="editor-grid">
         <div class="editor-col">
+          <div class="editor-tools" role="toolbar" aria-label="Insertar al inicio de una línea">
+            <button type="button" class="tool" data-insert="#"><b>#</b> Pendiente</button>
+            <button type="button" class="tool" data-insert="@"><b>@</b> Etiqueta</button>
+            <button type="button" class="tool" data-insert="$"><b>$</b> Prioridad</button>
+          </div>
           <label for="editor-text" class="sr-only">Texto de la nota</label>
           <textarea id="editor-text" spellcheck="true" placeholder="Titulo: Reunión con Edu Rosales
 Reunión sobre contingencia, pendientes de planillas y Federación
@@ -67,12 +78,8 @@ Reunión sobre contingencia, pendientes de planillas y Federación
 
 @Apolo
 
-$Alta"></textarea>
-          <p class="syntax-help">
-            <span><b>#</b> pendiente</span>
-            <span><b>@</b> etiqueta</span>
-            <span><b>$</b> prioridad: Alta, Media o Baja</span>
-          </p>
+$Alta" aria-describedby="editor-suggest"></textarea>
+          <div id="editor-suggest" class="suggest" aria-live="polite" hidden></div>
         </div>
         <div class="editor-col">
           <p class="preview-label">Así quedará el ticket</p>

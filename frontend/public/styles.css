@@ -226,6 +226,42 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .live-status[hidden] { display: none; }
 
+/* Búsqueda */
+.search {
+  position: relative;
+  margin-left: auto;
+  align-self: center;
+  width: min(300px, 100%);
+}
+.search input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 34px 8px 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.search input::placeholder { color: var(--muted); }
+.search input:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+.search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.search-key {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  pointer-events: none;
+}
+.search input:focus ~ .search-key, .search input:not(:placeholder-shown) ~ .search-key { display: none; }
+.empty-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
 
 .tickets {
   list-style: none;
@@ -444,8 +480,36 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background-position: 0 0;
 }
 #editor-text::placeholder { color: #9aa4ae; }
-.syntax-help { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 0; font-size: 15px; color: var(--muted); }
-.syntax-help b { font-family: var(--ticket); color: inherit; font-size: 16px; }
+/* Barra de símbolos del editor */
+.editor-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tool {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+}
+.tool:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tool b { font-family: var(--ticket); font-size: 17px; }
+@media (pointer: coarse) {
+  .tool { min-height: 44px; }
+  .sheet-foot .hint { visibility: hidden; }  /* los atajos de teclado no aplican en pantallas táctiles */
+}
+@media (max-width: 860px) {
+  .editor-tools { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .tool { justify-content: center; padding: 6px 4px; }
+}
+
+/* Sugerencias de @etiquetas y $prioridad */
+.suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.suggest[hidden] { display: none; }
+.suggest-label, .suggest-hint { font-size: 14px; color: var(--muted); }
+.suggest-hint { margin-left: 4px; }
+.suggest .chip.is-first { border-color: var(--accent); }
+@media (pointer: coarse) { .suggest-hint { display: none; } .suggest .chip { min-height: 40px; } }
 .preview-label { margin: 0 0 8px; font-size: 15px; color: var(--muted); }
 .preview { background: var(--paper); border-radius: var(--radius); padding: 14px 16px; font-family: var(--ticket); font-size: 15px; min-height: 120px; }
 .preview .ticket-title { margin: 0 0 6px; }
@@ -579,6 +643,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
   .live-status { order: 4; flex-basis: 100%; }
+  .search { order: 5; flex-basis: 100%; width: 100%; margin-left: 0; }
+  .search-key { display: none; }
   /* En pantallas chicas el menú es un panel lateral: los tickets se ven primero */
   .menu {
     position: fixed;
