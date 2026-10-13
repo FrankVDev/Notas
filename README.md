@@ -30,28 +30,42 @@ Pulsa **+** (o la tecla N) y escribe libremente. Cada línea se interpreta así:
 | Empieza con | Significa |
 |---|---|
 | `Titulo:` | Título de la nota (si falta, se usa la primera línea) |
-| `#` | Pendiente |
+| `#` | Pendiente. Con `>Nombre` al final se asigna un responsable: `#enviar correo >Lucía` |
 | `@` | Etiqueta |
 | `$` | Prioridad: Alta, Media o Baja |
+| `!` | Fecha límite: `!15/10`, `!15/10/2026`, `!hoy`, `!mañana`, `!viernes` |
 | cualquier otra cosa | Descripción |
 
 ```
 Titulo: Reunion Con Edu Rosales
 Reunion sobre contingencia, pendientes de planillas y Federacion
 
-#enviar correo a john obregon
+#enviar correo a john obregon >Lucía
 #terminar de procesar las planillas
 
 @Apolo
-
 $Alta
+!viernes
 ```
+
+Las fechas relativas (`!hoy`, `!mañana`, `!viernes`) y las fechas sin año se guardan como fecha completa (`!17/10/2026`), para que no cambien al editar la nota otro día. Una fecha sin año que ya pasó hace poco se toma como vencida; si pasó hace más de 3 meses, se asume del año siguiente.
 
 Los botones **# Pendiente**, **@ Etiqueta** y **$ Prioridad** del editor insertan el símbolo al inicio de una línea (útil en el celular). Al escribir `@` se sugieren las etiquetas que ya usaste, y al escribir `$` las prioridades; **Tab** usa la primera sugerencia. Ctrl + Enter guarda la nota.
 
+## Fecha límite
+
+- En cola, el ticket muestra "Vence el 20 oct", "Vence mañana" o "Vence hoy" (en ámbar) y "Vencida hace 3 días" (en rojo, con una franja roja arriba del ticket).
+- Las notas completadas muestran "Cumplida a tiempo" o "Cerrada con N días de retraso". No se marcan como vencidas porque ya están resueltas.
+- La fecha vence al terminar ese día en la zona horaria de `APP_TZ`.
+- En el calendario, los días con un cuadrito rojo tienen vencimientos de notas en cola. Al tocar un día se ven las notas creadas o que vencen ese día.
+
+## Exportar
+
+En el detalle de una nota, **Copiar texto** la copia lista para pegar en un correo o documento, y **Descargar .md** la guarda como archivo Markdown.
+
 ## Buscar y filtrar
 
-- El campo **Buscar notas** (atajo: tecla `/`) encuentra notas por título, descripción, pendientes o etiquetas, sin distinguir mayúsculas ni tildes. Escape borra la búsqueda.
+- El campo **Buscar notas** (atajo: tecla `/`) encuentra notas por título, descripción, pendientes, responsables o etiquetas, sin distinguir mayúsculas ni tildes. Escape borra la búsqueda.
 - La dirección del navegador refleja la vista actual, por ejemplo `?etiqueta=Apolo&buscar=planillas`. Al recargar no se pierde y puedes guardarla como marcador.
 
 ## Cómo funciona la cola
@@ -92,6 +106,8 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 │   ├── app/
 │   │   ├── main.py         # endpoints REST
 │   │   ├── models.py       # tablas notes y tasks
+│   │   ├── migrate.py      # aplica las migraciones al arrancar
+│   │   ├── migrations/     # migraciones de Alembic
 │   │   ├── events.py       # avisos en vivo entre dispositivos
 │   │   └── parser.py       # interpreta el texto con #, @ y $
 │   └── tests/test_parser.py
@@ -105,14 +121,30 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 
 | Método | Ruta | Uso |
 |---|---|---|
-| GET | `/api/notes?status=active\|done\|all&tag=&priority=&date=YYYY-MM-DD&q=` | Listar notas (`q` busca texto) |
+| GET | `/api/notes?status=active\|done\|all&tag=&priority=&assignee=&date=YYYY-MM-DD&q=` | Listar notas (`q` busca texto; `date` coincide con creación o vencimiento) |
 | POST | `/api/notes` `{raw}` | Crear nota desde el texto |
 | GET / PUT / DELETE | `/api/notes/{id}` | Ver, editar (re-interpreta el texto) o borrar |
 | PATCH | `/api/tasks/{id}` `{done}` | Marcar o desmarcar un pendiente |
 | POST | `/api/notes/{id}/complete` y `/reopen` | Completar o devolver a la cola (solo notas sin pendientes) |
 | POST | `/api/parse` `{raw}` | Vista previa sin guardar |
-| GET | `/api/meta?month=YYYY-MM` | Etiquetas, prioridades y días con notas |
+| GET | `/api/meta?month=YYYY-MM` | Etiquetas, prioridades, responsables, días con notas y días con vencimientos |
 | GET | `/api/events` | Avisos en vivo de cambios (Server-Sent Events) |
+
+## Migraciones de la base de datos
+
+La estructura de la base la maneja [Alembic](https://alembic.sqlalchemy.org). Al arrancar, la API aplica sola las migraciones pendientes de `backend/app/migrations/versions`, así que al hacer `git pull` y `docker compose up --build -d` la base se actualiza sin perder notas. Una base creada por una versión anterior (sin Alembic) se reconoce y se actualiza igual.
+
+Para cambiar la estructura (agregar un campo, por ejemplo):
+
+1. Modifica el modelo en `backend/app/models.py`.
+2. Genera la migración comparando el modelo con la base:
+   ```bash
+   docker compose exec api alembic revision --autogenerate -m "describe el cambio"
+   docker compose cp api:/app/app/migrations/versions ./backend/app/migrations/
+   ```
+3. Revisa el archivo generado, súbelo con git y reconstruye.
+
+Otros comandos útiles: `docker compose exec api alembic current` (versión actual) y `docker compose exec api alembic downgrade -1` (deshacer la última migración). Antes de migrar una base con notas importantes, haz un respaldo con `pg_dump`.
 
 ## Desarrollo
 

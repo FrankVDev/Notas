@@ -180,7 +180,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-radius: 50%;
   background: var(--accent);
 }
+.cal-day.has-due::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--danger);
+}
 .cal-day[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.cal-day[aria-pressed="true"]::before { background: var(--accent-ink); }
+.cal-legend { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+.lg { display: inline-block; width: 6px; height: 6px; }
+.lg-created { border-radius: 50%; background: var(--accent); }
+.lg-due { border-radius: 1px; background: var(--danger); margin-left: 10px; }
 .cal-day[aria-pressed="true"]::after { background: var(--accent-ink); }
 
 /* ---------- Filtros ---------- */
@@ -394,6 +409,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-radius: 2px;
   background: currentColor;
 }
+/* Fecha límite */
+.due { font-weight: 700; }
+.due .sym { font-family: var(--ticket); margin-right: 6px; }
+.due-over { color: var(--alta); }
+.due-soon { color: var(--media); }
+.due-ok { color: var(--baja); font-weight: 400; }
+.due-later, .due-late { color: var(--ticket-meta); font-weight: 400; }
+.due-date { color: var(--ticket-meta); }
+/* nota vencida en la cola: franja roja arriba del ticket */
+.ticket.is-overdue { box-shadow: inset 0 4px 0 var(--alta); }
+.ticket.is-overdue:has(.ticket-open:focus-visible) { box-shadow: inset 0 4px 0 var(--alta), inset 0 0 0 3px var(--accent); }
+.assignee { color: var(--ticket-meta); white-space: nowrap; }
+.check.done .assignee { text-decoration: line-through; }
+.preview-note { margin: 6px 0 0; color: var(--ticket-meta); font-family: var(--ui); font-size: 14px; }
+.export { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; font-size: 15px; color: var(--muted); }
 .prio-alta { color: var(--alta); }
 .prio-media { color: var(--media); }
 .prio-baja { color: var(--baja); }
@@ -499,8 +529,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .sheet-foot .hint { visibility: hidden; }  /* los atajos de teclado no aplican en pantallas táctiles */
 }
 @media (max-width: 860px) {
-  .editor-tools { display: grid; grid-template-columns: repeat(3, 1fr); }
-  .tool { justify-content: center; padding: 6px 4px; }
+  .editor-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .tool { justify-content: center; gap: 4px; padding: 6px 2px; font-size: 15px; }
+}
+@media (max-width: 420px) {
+  .editor-tools { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* Sugerencias de @etiquetas y $prioridad */

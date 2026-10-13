@@ -1,7 +1,7 @@
 import os
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, create_engine, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -13,6 +13,9 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
     pass
+
+# Las tablas las crea y actualiza Alembic (ver app/migrations y app/migrate.py).
+# Si cambias un modelo, crea una migración nueva; no basta con editar esta clase.
 
 
 class Note(Base):
@@ -29,6 +32,8 @@ class Note(Base):
     )
     # NULL = sigue en la cola; con fecha = ya salió
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # fecha límite (día completo, en la zona horaria de APP_TZ)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
 
     tasks: Mapped[list["Task"]] = relationship(
         back_populates="note",
@@ -46,5 +51,6 @@ class Task(Base):
     text: Mapped[str] = mapped_column(Text)
     done: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    assignee: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)  # responsable
 
     note: Mapped[Note] = relationship(back_populates="tasks")

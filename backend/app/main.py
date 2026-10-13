@@ -4,6 +4,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import date as Date, datetime, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
@@ -13,10 +14,16 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .events import broker
-from .models import Base, Note, SessionLocal, Task, engine
+from .migrate import upgrade_database
+from .models import Note, SessionLocal, Task, engine
 from .parser import parse_note
 
 APP_TZ = os.environ.get("APP_TZ", "America/Lima")
+
+
+def local_today() -> Date:
+    """Fecha de hoy en la zona horaria de la app (para !hoy, !mañana...)."""
+    return datetime.now(ZoneInfo(APP_TZ)).date()
 
 # La búsqueda ignora tildes si PostgreSQL tiene la extensión unaccent
 # (viene incluida en la imagen oficial; se activa al arrancar).
@@ -35,10 +42,11 @@ def enable_unaccent() -> bool:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # La base puede tardar unos segundos en aceptar conexiones
+    # La base puede tardar unos segundos en aceptar conexiones.
+    # Al conectar, se aplican las migraciones pendientes.
     for attempt in range(10):
         try:
-            Base.metadata.create_all(engine)
+            upgrade_database()
             break
         except OperationalError:
             if attempt == 9:
@@ -76,6 +84,7 @@ class TaskOut(BaseModel):
     id: int
     text: str
     done: bool
+    assignee: str | None
 
 
 class NoteOut(BaseModel):
@@ -88,23 +97,33 @@ class NoteOut(BaseModel):
     tasks: list[TaskOut]
     pending: int
     total: int
+    due_date: Date | None
     created_at: datetime
     completed_at: datetime | None
+
+
+class ParsedTaskOut(BaseModel):
+    text: str
+    assignee: str | None
 
 
 class ParsedOut(BaseModel):
     title: str
     description: str
-    tasks: list[str]
+    tasks: list[ParsedTaskOut]
     tags: list[str]
     priority: str | None
+    due_date: Date | None
+    normalized_raw: str
     warnings: list[str]
 
 
 class MetaOut(BaseModel):
     tags: list[str]
     priorities: list[str]
-    days: list[str]  # días del mes con notas creadas (YYYY-MM-DD)
+    assignees: list[str]
+    days: list[str]      # días del mes con notas creadas (YYYY-MM-DD)
+    due_days: list[str]  # días del mes en que vencen notas en cola
 
 
 # ---------- Utilidades ----------
@@ -113,9 +132,9 @@ def to_out(n: Note) -> NoteOut:
     return NoteOut(
         id=n.id, title=n.title, description=n.description, raw=n.raw,
         priority=n.priority, tags=list(n.tags or []),
-        tasks=[TaskOut(id=t.id, text=t.text, done=t.done) for t in n.tasks],
+        tasks=[TaskOut(id=t.id, text=t.text, done=t.done, assignee=t.assignee) for t in n.tasks],
         pending=sum(not t.done for t in n.tasks), total=len(n.tasks),
-        created_at=n.created_at, completed_at=n.completed_at,
+        due_date=n.due_date, created_at=n.created_at, completed_at=n.completed_at,
     )
 
 
@@ -138,21 +157,25 @@ def sync_completion(note: Note) -> None:
 
 
 def apply_raw(note: Note, raw: str) -> None:
-    parsed = parse_note(raw)
-    note.raw = raw
+    parsed = parse_note(raw, local_today())
+    note.raw = parsed.normalized_raw  # con las fechas relativas ya convertidas
     note.title = parsed.title
     note.description = parsed.description
     note.priority = parsed.priority
     note.tags = parsed.tags
+    note.due_date = parsed.due_date
 
     # Al editar, conserva el estado de los pendientes que no cambiaron de texto
+    # (cambiar solo el responsable no los desmarca)
     previous: dict[str, list[bool]] = {}
     for t in note.tasks:
         previous.setdefault(t.text.lower(), []).append(t.done)
     note.tasks.clear()
-    for i, text in enumerate(parsed.tasks):
-        kept = previous.get(text.lower())
-        note.tasks.append(Task(text=text, done=kept.pop(0) if kept else False, position=i))
+    for i, pt in enumerate(parsed.tasks):
+        kept = previous.get(pt.text.lower())
+        note.tasks.append(Task(
+            text=pt.text, assignee=pt.assignee, done=kept.pop(0) if kept else False, position=i,
+        ))
     sync_completion(note)
 
 
@@ -176,7 +199,7 @@ def search_condition(q: str):
         matches(Note.title),
         matches(Note.description),
         matches(func.array_to_string(Note.tags, " ")),
-        exists().where(Task.note_id == Note.id, matches(Task.text)),
+        exists().where(Task.note_id == Note.id, or_(matches(Task.text), matches(Task.assignee))),
     )
 
 
@@ -190,8 +213,12 @@ def health():
 @app.post("/api/parse", response_model=ParsedOut)
 def preview(body: NoteIn):
     """Vista previa: interpreta el texto sin guardarlo."""
-    p = parse_note(body.raw)
-    return ParsedOut(**p.__dict__)
+    p = parse_note(body.raw, local_today())
+    return ParsedOut(
+        title=p.title, description=p.description, tags=p.tags, priority=p.priority,
+        tasks=[ParsedTaskOut(text=t.text, assignee=t.assignee) for t in p.tasks],
+        due_date=p.due_date, normalized_raw=p.normalized_raw, warnings=p.warnings,
+    )
 
 
 @app.get("/api/notes", response_model=list[NoteOut])
@@ -201,6 +228,7 @@ def list_notes(
     priority: str | None = None,
     date: Date | None = None,
     q: str | None = Query(None, max_length=100),
+    assignee: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ):
     stmt = select(Note)
@@ -217,7 +245,12 @@ def list_notes(
     if priority:
         stmt = stmt.where(Note.priority.is_(None) if priority == "ninguna" else Note.priority == priority)
     if date:
-        stmt = stmt.where(func.date(local_created) == date)
+        # el día seleccionado en el calendario: notas creadas o que vencen ese día
+        stmt = stmt.where(or_(func.date(local_created) == date, Note.due_date == date))
+    if assignee:
+        stmt = stmt.where(exists().where(
+            Task.note_id == Note.id, func.lower(Task.assignee) == assignee.lower(),
+        ))
     if q and q.strip():
         stmt = stmt.where(search_condition(q.strip()))
 
@@ -324,10 +357,21 @@ async def events(request: Request):
 def meta(month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"), db: Session = Depends(get_db)):
     tags = db.scalars(select(func.unnest(Note.tags)).distinct()).all()
     priorities = db.scalars(select(Note.priority).where(Note.priority.is_not(None)).distinct()).all()
+    assignees = db.scalars(select(Task.assignee).where(Task.assignee.is_not(None)).distinct()).all()
     days: list[str] = []
+    due_days: list[str] = []
     if month:
         day_expr = func.to_char(local_created, "YYYY-MM-DD")
         days = db.scalars(
             select(day_expr).where(func.to_char(local_created, "YYYY-MM") == month).distinct()
         ).all()
-    return MetaOut(tags=sorted(tags, key=str.lower), priorities=sorted(priorities), days=sorted(days))
+        due_expr = func.to_char(Note.due_date, "YYYY-MM-DD")
+        due_days = db.scalars(
+            select(due_expr).where(
+                Note.completed_at.is_(None), func.to_char(Note.due_date, "YYYY-MM") == month,
+            ).distinct()
+        ).all()
+    return MetaOut(
+        tags=sorted(tags, key=str.lower), priorities=sorted(priorities),
+        assignees=sorted(assignees, key=str.lower), days=sorted(days), due_days=sorted(due_days),
+    )

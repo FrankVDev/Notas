@@ -74,6 +74,38 @@ function fmtStamp(iso) {
   const time = d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
   return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}, ${time}`;
 }
+// Días entre fechas "YYYY-MM-DD", sin problemas de horario de verano
+const dayNum = (iso) => { const [y, m, d] = iso.split("-").map(Number); return Date.UTC(y, m - 1, d) / 86400000; };
+
+function fmtDue(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d} ${MONTHS[m - 1].slice(0, 3)}${y === new Date().getFullYear() ? "" : ` ${y}`}`;
+}
+const fmtDueFull = (iso) => iso.split("-").reverse().join("/");
+
+// Estado de la fecha límite según si la nota sigue en cola o ya se cerró
+function dueInfo(note) {
+  if (!note.due_date) return null;
+  const due = dayNum(note.due_date);
+  if (note.completed_at) {
+    const late = dayNum(isoDay(new Date(note.completed_at))) - due;
+    if (late <= 0) return { cls: "due-ok", text: "Cumplida a tiempo" };
+    return { cls: "due-late", text: late === 1 ? "Cerrada con 1 día de retraso" : `Cerrada con ${late} días de retraso` };
+  }
+  const left = due - dayNum(isoDay(new Date()));
+  if (left < 0) return { cls: "due-over", overdue: true, text: left === -1 ? "Vencida ayer" : `Vencida hace ${-left} días` };
+  if (left === 0) return { cls: "due-soon", text: "Vence hoy" };
+  if (left === 1) return { cls: "due-soon", text: "Vence mañana" };
+  return { cls: "due-later", text: `Vence el ${fmtDue(note.due_date)}` };
+}
+
+function dueBadge(note, tag = "div") {
+  const info = dueInfo(note);
+  if (!info) return null;
+  return h(tag, { class: `due ${info.cls}`, title: `Fecha límite: ${fmtDueFull(note.due_date)}` },
+    h("span", { class: "sym", "aria-hidden": "true" }, "!"), info.text);
+}
+
 function fmtLong(iso) {
   return new Date(iso).toLocaleString("es", { dateStyle: "long", timeStyle: "short" });
 }
@@ -148,7 +180,8 @@ let viewSeq = 0;
 state.q = "";  // texto de búsqueda
 
 // Filtros del panel lateral (calendario, prioridad, etiqueta)
-const panelFilterCount = () => [state.tag, state.priority, state.date].filter(Boolean).length;
+state.assignee = null;  // filtro por responsable
+const panelFilterCount = () => [state.tag, state.priority, state.date, state.assignee].filter(Boolean).length;
 // Cualquier filtro, incluida la búsqueda
 const hasFilters = () => panelFilterCount() > 0 || Boolean(state.q);
 
@@ -159,6 +192,7 @@ function readUrl() {
   state.status = p.get("estado") === "completadas" ? "done" : "active";
   state.tag = p.get("etiqueta") || null;
   state.priority = p.get("prioridad") || null;
+  state.assignee = p.get("responsable") || null;
   state.q = p.get("buscar") || "";
   const date = p.get("fecha");
   state.date = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : null;
@@ -174,6 +208,7 @@ function writeUrl() {
   if (state.status === "done") p.set("estado", "completadas");
   if (state.tag) p.set("etiqueta", state.tag);
   if (state.priority) p.set("prioridad", state.priority);
+  if (state.assignee) p.set("responsable", state.assignee);
   if (state.date) p.set("fecha", state.date);
   if (state.q) p.set("buscar", state.q);
   const target = p.toString() ? `?${p}` : "";
@@ -204,6 +239,7 @@ async function loadNotes() {
   if (state.priority) q.set("priority", state.priority);
   if (state.date) q.set("date", state.date);
   if (state.q) q.set("q", state.q);
+  if (state.assignee) q.set("assignee", state.assignee);
   writeUrl();
   setBusy(true);
   try {
@@ -239,6 +275,7 @@ function renderCalendar() {
   const firstOffset = (new Date(y, m, 1).getDay() + 6) % 7; // semana empieza el lunes
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const withNotes = new Set(state.meta.days);
+  const withDue = new Set(state.meta.due_days || []);
   const todayIso = isoDay(today);
 
   const shiftMonth = (delta) => {
@@ -256,11 +293,13 @@ function renderCalendar() {
     const classes = ["cal-day"];
     if (iso === todayIso) classes.push("today");
     if (withNotes.has(iso)) classes.push("has-notes");
+    if (withDue.has(iso)) classes.push("has-due");
+    const label = [withNotes.has(iso) ? "con notas creadas" : null, withDue.has(iso) ? "vencen notas" : null].filter(Boolean);
     grid.append(h("button", {
       type: "button",
       class: classes.join(" "),
       "aria-pressed": String(state.date === iso),
-      "aria-label": `${d} de ${MONTHS[m]}${withNotes.has(iso) ? ", con notas" : ""}`,
+      "aria-label": `${d} de ${MONTHS[m]}${label.length ? ", " + label.join(" y ") : ""}`,
       onclick: () => {
         state.date = state.date === iso ? null : iso;
         renderCalendar();
@@ -277,6 +316,9 @@ function renderCalendar() {
       h("button", { type: "button", class: "cal-nav", "aria-label": "Mes siguiente", onclick: () => shiftMonth(1) }, "›"),
     ),
     grid,
+    h("p", { class: "cal-legend", "aria-hidden": "true" },
+      h("span", { class: "lg lg-created" }), "creadas",
+      h("span", { class: "lg lg-due" }), "vencen"),
   );
 }
 
@@ -306,9 +348,17 @@ function renderFilters() {
     tagChips.push(chip(state.tag, "@", true, () => { state.tag = null; renderFilters(); loadNotes(); }));
   }
 
+  const assignees = [...state.meta.assignees || []];
+  if (state.assignee && !assignees.some((a) => fold(a) === fold(state.assignee))) assignees.push(state.assignee);
+  const assigneeChips = assignees.map((a) => chip(a, ">", state.assignee !== null && fold(state.assignee) === fold(a), () => {
+    state.assignee = state.assignee !== null && fold(state.assignee) === fold(a) ? null : a;
+    renderFilters();
+    loadNotes();
+  }));
+
   const dateGroup = state.date
     ? h("div", { class: "filter-group" },
-        h("p", { class: "filter-label" }, "Fecha de creación"),
+        h("p", { class: "filter-label" }, "Creadas o que vencen el"),
         h("div", { class: "chips" }, h("button", {
           type: "button", class: "chip", "aria-pressed": "true",
           onclick: () => { state.date = null; renderCalendar(); renderFilters(); loadNotes(); },
@@ -331,6 +381,11 @@ function renderFilters() {
       tagChips.length
         ? h("div", { class: "chips" }, tagChips)
         : h("p", { class: "empty-hint" }, "Aparecen al escribir @etiqueta en una nota.")),
+    h("div", { class: "filter-group" },
+      h("p", { class: "filter-label" }, "Responsables"),
+      assigneeChips.length
+        ? h("div", { class: "chips" }, assigneeChips)
+        : h("p", { class: "empty-hint" }, "Aparecen al escribir #pendiente >Nombre en una nota.")),
   );
 
   const active = panelFilterCount();
@@ -347,7 +402,7 @@ function fmtDate(iso) {
 }
 
 $("#clear-filters").addEventListener("click", () => {
-  state.tag = state.priority = state.date = null;
+  state.tag = state.priority = state.date = state.assignee = null;
   renderCalendar();
   renderFilters();
   loadNotes();
@@ -422,7 +477,8 @@ function checklistItem(note, task, scope) {
         "data-focus-key": `${scope}-${task.id}`,
         onchange: (e) => toggleTask(note.id, task.id, e.target.checked),
       }),
-      h("span", {}, task.text)));
+      h("span", {}, task.text,
+        task.assignee ? h("span", { class: "assignee" }, ` >${task.assignee}`) : null)));
 }
 
 function ticket(note, isNext) {
@@ -454,7 +510,7 @@ function ticket(note, isNext) {
         expanded && hiddenCount > 0 ? h("p", { class: "pend-more" }, `y ${hiddenCount} más en el detalle`) : null);
 
   return h("li", { class: `ticket-wrap${state.flash.has(note.id) ? " is-flash" : ""}`, "data-note-id": note.id },
-    h("article", { class: `ticket${done ? " is-done" : ""}` },
+    h("article", { class: `ticket${done ? " is-done" : ""}${dueInfo(note)?.overdue ? " is-overdue" : ""}` },
       h("header", { class: "ticket-head" },
         h("span", { class: "ticket-num" }, `N.º ${pad(note.id)}`),
         isNext ? h("span", { class: "ticket-next" }, "Sigue") : null,
@@ -472,7 +528,8 @@ function ticket(note, isNext) {
       pend,
       h("div", { class: "ticket-meta" },
         note.tags.length ? h("div", { class: "ticket-tags" }, note.tags.map((t) => "@" + t).join("  ")) : null,
-        note.priority ? h("div", { class: prioClass(note.priority) }, "$" + cap(note.priority)) : null),
+        note.priority ? h("div", { class: prioClass(note.priority) }, "$" + cap(note.priority)) : null,
+        dueBadge(note)),
     ));
 }
 
@@ -724,9 +781,17 @@ function renderPreview(p) {
   fill(box,
     h("h3", { class: "ticket-title" }, p.title),
     p.description ? h("p", { class: "preview-desc" }, p.description) : null,
-    p.tasks.length ? h("ul", {}, p.tasks.map((t) => h("li", {}, t))) : null,
+    p.tasks.length
+      ? h("ul", {}, p.tasks.map((t) => h("li", {}, t.text,
+          t.assignee ? h("span", { class: "assignee" }, ` >${t.assignee}`) : null)))
+      : null,
     p.tags.length ? h("div", { class: "ticket-tags" }, p.tags.map((t) => "@" + t).join("  ")) : null,
     p.priority ? h("div", { class: prioClass(p.priority) }, "$" + cap(p.priority)) : null,
+    p.due_date ? dueBadge({ due_date: p.due_date }) : null,
+    // !hoy, !mañana o una fecha sin año se guardan como fecha completa
+    p.due_date && !editorText.value.includes(`!${fmtDueFull(p.due_date)}`)
+      ? h("p", { class: "preview-note" }, `Se guardará como !${fmtDueFull(p.due_date)}`)
+      : null,
     p.warnings.map((w) => h("p", { class: "preview-warn" }, w)),
   );
 }
@@ -812,14 +877,29 @@ function updateSuggestions() {
   const line = currentLine();
   const before = editorText.value.slice(line.start, line.pos);
   const after = editorText.value.slice(line.pos, line.end);
-  const m = before.match(/^\s*([@$])(.*)$/);
+  const m = before.match(/^(\s*)([@$!])(.*)$/);
+  const who = before.match(/^\s*#.*\s>(\S*)$/);  // ">Nombre" al final de un pendiente
   suggestions = [];
+  const focused = editorText === document.activeElement && after.trim() === "";
 
-  if (m && after.trim() === "" && editorText === document.activeElement) {
-    const [, sym, typed] = m;
+  if (focused && who) {
+    const t = fold(who[1]);
+    const start = line.start + before.lastIndexOf(">");
+    suggestions = (state.meta.assignees || [])
+      .filter((v) => fold(v).includes(t) && fold(v) !== t)
+      .sort((a, b) => fold(b).startsWith(t) - fold(a).startsWith(t))
+      .slice(0, 6)
+      .map((v) => ({ sym: ">", value: v, start, text: `>${v}` }));
+  } else if (focused && m) {
+    const [, indent, sym, typed] = m;
     const t = fold(typed.trim());
     let pool;
-    if (sym === "@") {
+    if (sym === "!") {
+      // hoy, mañana y los días de la semana siguientes
+      const names = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+      const dow = new Date().getDay();
+      pool = ["hoy", "mañana", ...[2, 3, 4, 5, 6].map((k) => names[(dow + k) % 7])];
+    } else if (sym === "@") {
       // etiquetas ya usadas en otras notas, sin las que ya tiene esta
       const inNote = new Set();
       let offset = 0;
@@ -835,7 +915,7 @@ function updateSuggestions() {
       .filter((v) => fold(v).includes(t) && fold(v) !== t)
       .sort((a, b) => fold(b).startsWith(t) - fold(a).startsWith(t))
       .slice(0, 6)
-      .map((v) => ({ sym, value: v }));
+      .map((v) => ({ sym, value: v, start: line.start, text: `${indent}${sym}${v}` }));
   }
 
   if (!suggestions.length) {
@@ -856,9 +936,7 @@ function updateSuggestions() {
 }
 
 function acceptSuggestion(s) {
-  const line = currentLine();
-  const indent = line.text.match(/^\s*/)[0];
-  insertText(line.start, line.end, `${indent}${s.sym}${s.value}`);
+  insertText(s.start, currentLine().end, s.text);
   suggestions = [];
   updateSuggestions();
 }
@@ -954,12 +1032,18 @@ function renderDetail(note) {
       note.tasks.length
         ? h("ul", { class: "checklist", "aria-label": "Pendientes" }, note.tasks.map((t) => checklistItem(note, t, "d")))
         : null,
-      (note.tags.length || note.priority)
+      (note.tags.length || note.priority || note.due_date)
         ? h("div", { class: "detail-meta" },
             note.tags.length ? h("span", { class: "ticket-tags" }, note.tags.map((t) => "@" + t).join("  ")) : null,
-            note.priority ? h("span", { class: prioClass(note.priority) }, "$" + cap(note.priority)) : null)
+            note.priority ? h("span", { class: prioClass(note.priority) }, "$" + cap(note.priority)) : null,
+            note.due_date ? dueBadge(note, "span") : null,
+            note.due_date ? h("span", { class: "due-date" }, `(${fmtDueFull(note.due_date)})`) : null)
         : null),
     h("p", { class: "status-line" }, status),
+    h("div", { class: "export" },
+      h("span", {}, "Exportar:"),
+      h("button", { type: "button", class: "link-btn", onclick: () => copyNote(note) }, "Copiar texto"),
+      h("button", { type: "button", class: "link-btn", onclick: () => downloadNote(note) }, "Descargar .md")),
     h("footer", { class: "sheet-foot" },
       h("button", { type: "button", class: "btn btn-danger", onclick: () => deleteNote(note) }, "Eliminar"),
       h("span", { class: "spacer" }),
@@ -971,6 +1055,56 @@ function renderDetail(note) {
         ? h("button", { type: "button", class: "btn", onclick: () => setCompleted(note, false) }, "Devolver a la cola")
         : null),
   );
+}
+
+// ---------- Exportar una nota ----------
+function noteToText(note) {
+  const lines = [`# ${note.title}`];
+  if (note.description) lines.push("", note.description);
+  if (note.tasks.length) {
+    lines.push("", "Pendientes:");
+    for (const t of note.tasks) lines.push(`- [${t.done ? "x" : " "}] ${t.text}${t.assignee ? ` (responsable: ${t.assignee})` : ""}`);
+  }
+  lines.push("");
+  if (note.tags.length) lines.push(`Etiquetas: ${note.tags.join(", ")}`);
+  if (note.priority) lines.push(`Prioridad: ${cap(note.priority)}`);
+  if (note.due_date) lines.push(`Fecha límite: ${fmtDueFull(note.due_date)} (${dueInfo(note).text.toLowerCase()})`);
+  lines.push(`N.º ${pad(note.id)}, creada el ${fmtLong(note.created_at)}`);
+  if (note.completed_at) lines.push(`Completada el ${fmtLong(note.completed_at)}`);
+  return lines.join("\n") + "\n";
+}
+
+// Copia con el método clásico: funciona también en http por IP (desde el celular)
+function copyLegacy(text) {
+  const ta = h("textarea", { class: "sr-only", readonly: true });
+  ta.value = text;
+  detail.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+async function copyNote(note) {
+  const text = noteToText(note);
+  let ok = false;
+  // el portapapeles moderno solo existe en https o localhost, y puede rechazarse
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
+  }
+  if (!ok) ok = copyLegacy(text);
+  toast(ok ? "Nota copiada. Puedes pegarla en un correo o documento." : "No se pudo copiar. Prueba con Descargar.");
+}
+
+function downloadNote(note) {
+  const slug = fold(note.title).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "nota";
+  const url = URL.createObjectURL(new Blob([noteToText(note)], { type: "text/markdown;charset=utf-8" }));
+  const a = h("a", { href: url, download: `${pad(note.id)}-${slug}.md` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 detail.addEventListener("close", () => { state.detail = null; });
