@@ -1,0 +1,22 @@
+# Modo proxy inverso (servidor con Caddy, ver el repositorio servidor-casa).
+#
+# Se activa agregando en .env:
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
+# (en Windows el separador es ";" en lugar de ":").
+#
+# Cambios respecto al modo directo:
+# - web ya no publica un puerto en el servidor: solo el proxy llega a él.
+# - web se une a la red compartida "proxy" con el nombre notas-web, que es
+#   el que usa el Caddyfile: reverse_proxy notas-web:80
+services:
+  web:
+    ports: !reset []
+    networks:
+      default:
+      proxy:
+        aliases:
+          - notas-web
+
+networks:
+  proxy:
+    external: true

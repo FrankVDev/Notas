@@ -1,3 +1,7 @@
+# Nombre fijo del proyecto: los contenedores y el volumen de datos no
+# dependen del nombre de la carpeta (si la renombras, tus notas siguen ahí).
+name: notas
+
 services:
   db:
     image: postgres:16-alpine
@@ -21,6 +25,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       APP_TZ: ${APP_TZ:-America/Lima}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -28,6 +33,8 @@ services:
   web:
     build: ./frontend
     restart: unless-stopped
+    # Modo directo: la app queda en http://IP:WEB_PORT.
+    # Detrás de un proxy inverso, se usa además docker-compose.proxy.yml.
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
@@ -43,9 +50,11 @@ services:
       BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
       TZ: ${APP_TZ:-America/Lima}
+    # ":z" permite a SELinux (Rocky, Fedora...) compartir estas carpetas con
+    # el contenedor; en Windows y Mac se ignora.
     volumes:
-      - ./respaldos:/respaldos
-      - ./backup/backup.sh:/backup.sh:ro
+      - ./respaldos:/respaldos:z
+      - ./backup/backup.sh:/backup.sh:ro,z
     entrypoint: ["sh", "/backup.sh"]
     depends_on:
       db:

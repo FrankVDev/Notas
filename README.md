@@ -14,6 +14,17 @@ docker compose up --build -d
 
 Abre **http://localhost:8080** y crea tu cuenta. **La primera cuenta que se crea recibe todas las notas que ya existían**, así que crea la tuya antes que nadie. La documentación interactiva de la API está en http://localhost:8080/api/docs.
 
+Para instalarla en un servidor Rocky Linux detrás de un proxy inverso, con nombre propio (`http://notas.home.arpa`), acceso por SSH y usuarios compartidos, sigue la guía [docs/rocky-linux.md](docs/rocky-linux.md).
+
+### Dos formas de ejecutarla
+
+| Modo | Dirección | Cómo |
+|---|---|---|
+| **Directo** (por defecto) | `http://IP:8080` | Tal cual; el puerto se cambia con `WEB_PORT` |
+| **Detrás de Caddy** | `http://notas.home.arpa` | En `.env`: `COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml` (en Windows, `;` en lugar de `:`). Requiere el repositorio de infraestructura con Caddy |
+
+En modo proxy, el contenedor `web` no publica ningún puerto y se une a la red compartida `proxy` con el nombre `notas-web`. La app recibe la IP real de cada visitante (para el límite de intentos de inicio de sesión) solo si la conexión viene de esa red, así que nadie puede falsearla.
+
 Comandos útiles:
 
 ```bash
@@ -30,7 +41,7 @@ docker compose down -v       # apagar y BORRAR todas las notas
 - Las contraseñas se guardan con hash scrypt y las sesiones como hash SHA-256: una copia de la base no permite entrar.
 - Tras 5 intentos fallidos de inicio de sesión desde la misma IP para un usuario, hay que esperar 10 minutos.
 - Para que nadie más pueda crear cuentas, pon `ALLOW_SIGNUP=false` en `.env` y ejecuta `docker compose up -d`.
-- La app funciona por http en la red local, así que las contraseñas viajan sin cifrar dentro de tu wifi. Si algún día la expones fuera de casa, ponla detrás de https y usa `COOKIE_SECURE=true`.
+- La app funciona por http en la red local, así que las contraseñas viajan sin cifrar dentro de tu wifi. Con Caddy se puede activar https gratis (ver el repositorio de infraestructura); en ese caso pon `COOKIE_SECURE=true`. Dentro de Tailscale el tráfico ya va cifrado.
 
 ## Administrar cuentas
 
@@ -138,6 +149,8 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 ```
 .
 ├── docker-compose.yml
+├── docker-compose.proxy.yml # modo detrás de Caddy (opcional)
+├── docs/rocky-linux.md     # instalación en un servidor Rocky Linux
 ├── .env                    # credenciales y puerto (no subir a git)
 ├── backup/backup.sh        # respaldo automático
 ├── respaldos/              # copias de la base (no se sube a git)
