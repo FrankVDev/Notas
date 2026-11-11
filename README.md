@@ -56,7 +56,37 @@ Desde la carpeta del proyecto, en la PC donde corre Docker:
 | `docker compose exec api python -m app.admin cerrar-sesiones ana` | Obliga a iniciar sesión de nuevo en todos sus dispositivos |
 | `docker compose exec api python -m app.admin borrar ana` | Borra la cuenta y **todas sus notas** (pide escribir el nombre para confirmar) |
 
+| `docker compose exec api python -m app.admin temas` | Lista el catálogo de temas visuales y cuántos usuarios usa cada uno |
+| `docker compose exec api python -m app.admin tema ana nube` | Asigna el tema `nube` a la cuenta (`--quitar` vuelve al diseño por defecto) |
+
 La lógica está en `backend/app/admin_service.py`, separada del comando (`admin.py`), para que una futura vista de administrador en la app pueda usar las mismas funciones desde la API.
+
+## Temas visuales
+
+Cada usuario puede tener un tema que cambia solo la apariencia de la app (colores, letra, formas); el funcionamiento es el mismo para todos. Sin tema asignado se ve el diseño de siempre.
+
+- El catálogo está en la tabla `themes` (`clave`, `nombre`, `descripcion`, `activo`) y cada usuario apunta a uno con `users.theme_id`. Si se borra un tema, sus usuarios vuelven solos al diseño por defecto.
+- El diseño de cada tema está en `frontend/public/temas.css`, en el bloque `body[data-tema="<clave>"]`. Al iniciar sesión, la app recibe la clave en `/api/auth/me` y la pone en el `<body>`.
+- El usuario ve el cambio al recargar la app o al volver a iniciar sesión.
+
+Asignar o quitar un tema, con el comando o directamente en la base:
+
+```bash
+docker compose exec api python -m app.admin tema ana nube
+docker compose exec api python -m app.admin tema ana --quitar
+```
+
+```sql
+UPDATE users SET theme_id = (SELECT id FROM themes WHERE clave = 'nube') WHERE username = 'ana';
+UPDATE users SET theme_id = NULL WHERE username = 'ana';
+```
+
+Para agregar un tema nuevo:
+
+1. Escribe su bloque en `temas.css` con una clave nueva (minúsculas, números o guiones), por ejemplo `body[data-tema="oceano"]`, y ejecuta `docker compose up --build -d`.
+2. Regístralo en el catálogo: `docker compose exec api python -m app.admin nuevo-tema oceano "Océano"`.
+
+`desactivar-tema` y `activar-tema` ocultan o vuelven a mostrar un tema sin quitárselo a nadie. Temas incluidos: `nube` (cielo pastel celeste y rosa, con letra Nunito).
 
 ## Respaldo automático
 
@@ -159,7 +189,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── main.py         # endpoints REST
-│   │   ├── models.py       # tablas notes y tasks
+│   │   ├── models.py       # tablas notes, tasks, users, sessions y themes
 │   │   ├── migrate.py      # aplica las migraciones al arrancar
 │   │   ├── migrations/     # migraciones de Alembic
 │   │   ├── events.py       # avisos en vivo entre dispositivos
@@ -171,7 +201,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf          # sirve la web y redirige /api al backend
-    └── public/             # index.html, styles.css, app.js (sin build)
+    └── public/             # index.html, styles.css, temas.css, app.js (sin build)
 ```
 
 ### Endpoints
@@ -188,7 +218,7 @@ navegador ──► web (Nginx :8080) ──/api──► api (FastAPI :8000) �
 | GET | `/api/events` | Avisos en vivo de cambios (Server-Sent Events) |
 | GET | `/api/auth/config` | Si se pueden crear cuentas y si ya existe alguna |
 | POST | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Crear cuenta, entrar y salir (`{username, password}`) |
-| GET | `/api/auth/me` | Usuario de la sesión actual |
+| GET | `/api/auth/me` | Usuario de la sesión actual y la clave de su tema visual (`theme`) |
 | POST | `/api/auth/password` `{current, new}` | Cambiar contraseña |
 
 Todos los endpoints de notas requieren sesión; una nota de otro usuario responde 404 como si no existiera.

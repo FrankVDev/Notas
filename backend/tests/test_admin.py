@@ -16,7 +16,10 @@ def test_contrasena_generada_es_valida_y_legible():
 def test_comandos_disponibles():
     parser = admin.build_parser()
     for argv in (["usuarios"], ["sesiones", "ana"], ["crear", "ana", "--generar"],
-                 ["restablecer", "ana"], ["cerrar-sesiones", "ana"], ["borrar", "ana", "--confirmar"]):
+                 ["restablecer", "ana"], ["cerrar-sesiones", "ana"], ["borrar", "ana", "--confirmar"],
+                 ["temas"], ["tema", "ana", "nube"], ["tema", "ana", "--quitar"],
+                 ["nuevo-tema", "oceano", "Océano", "--descripcion", "Azules"],
+                 ["activar-tema", "nube"], ["desactivar-tema", "nube"]):
         assert parser.parse_args(argv).fn
     with pytest.raises(SystemExit):
         parser.parse_args(["crear", "ana", "--generar", "--contrasena", "x"])  # opciones excluyentes

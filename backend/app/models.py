@@ -18,6 +18,19 @@ class Base(DeclarativeBase):
 # Si cambias un modelo, crea una migración nueva; no basta con editar esta clase.
 
 
+class Theme(Base):
+    """Catálogo de temas visuales. El aspecto de cada tema vive en
+    frontend/public/temas.css, en el bloque body[data-tema="<clave>"]."""
+    __tablename__ = "themes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    clave: Mapped[str] = mapped_column(String(30), unique=True, index=True)  # la que usa el CSS
+    nombre: Mapped[str] = mapped_column(String(60))
+    descripcion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -25,6 +38,17 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(30), unique=True, index=True)  # en minúsculas
     password_hash: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # tema visual; NULL = diseño por defecto. Si se borra el tema, vuelve a NULL
+    theme_id: Mapped[int | None] = mapped_column(
+        ForeignKey("themes.id", ondelete="SET NULL", name="fk_users_theme_id"), nullable=True, index=True,
+    )
+
+    theme: Mapped[Theme | None] = relationship(lazy="joined")
+
+    @property
+    def theme_clave(self) -> str | None:
+        """Clave del tema que debe ver el usuario, o None si no tiene o está desactivado."""
+        return self.theme.clave if self.theme and self.theme.activo else None
 
 
 class UserSession(Base):

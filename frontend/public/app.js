@@ -1282,8 +1282,16 @@ async function showAuth(message = "") {
   $("#auth-user").focus();
 }
 
-function startApp(username) {
+// Tema visual asignado al usuario en la base (tabla themes). Activa el
+// bloque body[data-tema="..."] de temas.css; sin tema, el diseño por defecto.
+function applyTheme(theme) {
+  if (theme) document.body.dataset.tema = theme;
+  else delete document.body.dataset.tema;
+}
+
+function startApp(username, theme = null) {
   state.user = username;
+  applyTheme(theme);
   $("#account-name").textContent = username;
   $("#password-user").value = username;
   $("#auth").hidden = true;
@@ -1297,6 +1305,7 @@ function startApp(username) {
 // Cierra la vista de notas (sesión cerrada o vencida) sin dejar datos a la vista
 function lockApp(message = "") {
   state.user = null;
+  applyTheme(null);
   live?.close();
   live = null;
   clearTimeout(reconnectTimer);
@@ -1328,7 +1337,7 @@ authForm.addEventListener("submit", async (e) => {
   try {
     const path = authMode === "register" ? "/auth/register" : "/auth/login";
     const me = await api(path, { method: "POST", body: JSON.stringify({ username, password }) });
-    startApp(me.username);
+    startApp(me.username, me.theme);
   } catch (ex) {
     err.textContent = ex.status === 422 && authMode === "login" ? "Usuario o contraseña incorrectos." : ex.message;
     err.hidden = false;
@@ -1397,7 +1406,7 @@ $("#password-form").addEventListener("submit", async (e) => {
 async function boot() {
   try {
     const me = await api("/auth/me");
-    startApp(me.username);
+    startApp(me.username, me.theme);
   } catch (ex) {
     if (ex.status === 401) showAuth();
     else {

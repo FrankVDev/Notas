@@ -1,0 +1,200 @@
+/* =====================================================================
+   Temas por usuario (solo apariencia)
+   Se activan con <body data-tema="clave">, donde la clave viene de la
+   tabla themes. Si un usuario no tiene tema, ve el diseño de styles.css.
+   ===================================================================== */
+
+/* Nunito (SIL Open Font License), letra redondeada del tema "nube" */
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("fonts/nunito-variable.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* =====================================================================
+   Tema "nube": cielo pastel, tickets blancos con borde de nube
+   ===================================================================== */
+body[data-tema="nube"] {
+  --wall: #dcefff;          /* cielo */
+  --panel: #f5faff;         /* menú y diálogos */
+  --paper: #ffffff;         /* tickets: nubes blancas */
+  --ink: #284867;           /* azul marino suave en lugar de negro */
+  --text: #284867;
+  --muted: #5d7a96;
+  --line: #c6def2;
+  --steel: #b5d8f3;         /* riel */
+  --steel-dark: #93c2e8;
+  --accent: #2b7cc0;        /* azul cielo con contraste suficiente para texto blanco */
+  --accent-ink: #ffffff;
+  --rosa: #f7c6d6;          /* acento secundario */
+  --rosa-ink: #8a2f52;
+  --alta: #c03752;
+  --media: #9a5f00;
+  --baja: #2a7a58;
+  --danger: #c03752;
+  --ticket-meta: #5d7a96;
+  --ticket-done: #8aa3ba;
+  --radius: 18px;
+  --ui: "Nunito", "Barlow Semi Condensed", system-ui, sans-serif;
+  --ticket: "Nunito", "Barlow Semi Condensed", system-ui, sans-serif;
+
+  /* nubes muy tenues en el fondo */
+  background:
+    radial-gradient(ellipse 340px 120px at 88% 6%, rgb(255 255 255 / 0.75), transparent 70%),
+    radial-gradient(ellipse 260px 90px at 72% 92%, rgb(255 255 255 / 0.6), transparent 70%),
+    radial-gradient(ellipse 420px 140px at 30% 60%, rgb(255 255 255 / 0.45), transparent 70%),
+    var(--wall);
+  background-attachment: fixed;
+}
+
+/* Estructura y textos */
+body[data-tema="nube"] .brand { color: var(--accent); font-weight: 800; letter-spacing: 0; }
+body[data-tema="nube"] .board-head h2 { font-weight: 800; letter-spacing: 0; }
+body[data-tema="nube"] .panel-title { font-weight: 800; }
+body[data-tema="nube"] .menu { border-right-color: transparent; box-shadow: 1px 0 0 var(--line); }
+
+/* Riel: una cinta celeste redondeada */
+body[data-tema="nube"] .ticket-wrap { filter: drop-shadow(0 6px 10px rgb(43 124 192 / 0.14)); }
+body[data-tema="nube"] .ticket-wrap::before {
+  height: 10px;
+  border-bottom: 0;
+  border-radius: 999px;
+  background: repeating-linear-gradient(90deg, var(--steel) 0 18px, #c9e3f7 18px 36px);
+}
+
+/* Ticket: esquinas suaves arriba y borde inferior de nube (bultos hacia afuera) */
+body[data-tema="nube"] .ticket {
+  --bump: 11px;
+  border-radius: 0 0 2px 2px;
+  padding: 16px 18px calc(18px + var(--bump));
+  font-size: 15px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--bump)) no-repeat,
+    radial-gradient(circle var(--bump) at 50% 0, #000 97%, #0000) 50% 100% / calc(2 * var(--bump)) var(--bump) repeat-x;
+          mask:
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--bump)) no-repeat,
+    radial-gradient(circle var(--bump) at 50% 0, #000 97%, #0000) 50% 100% / calc(2 * var(--bump)) var(--bump) repeat-x;
+}
+body[data-tema="nube"] .ticket-head { border-bottom: 2px dotted var(--line); font-size: 13px; }
+body[data-tema="nube"] .ticket-num { font-weight: 800; }
+body[data-tema="nube"] .ticket-next {
+  background: var(--rosa);
+  color: var(--rosa-ink);
+  border-radius: 999px;
+  padding: 0 9px;
+  font-weight: 800;
+}
+body[data-tema="nube"] .ticket-title { font-weight: 800; font-size: 20px; letter-spacing: 0; }
+body[data-tema="nube"] .ticket-arrow { color: var(--accent); }
+body[data-tema="nube"] .pend-box {
+  border: 0;
+  border-radius: 14px;
+  background: #eef6fd;
+}
+body[data-tema="nube"] .pend-box.is-clear { background: none; border: 2px dashed var(--line); }
+body[data-tema="nube"] .pend-toggle { border-radius: 14px; }
+body[data-tema="nube"] .pend-toggle:hover { background: #e2f0fb; }
+body[data-tema="nube"] .pend-box b { color: var(--accent); font-weight: 800; }
+body[data-tema="nube"] .pend-list { border-top: 2px dotted var(--line); }
+body[data-tema="nube"] .ticket-tags { color: var(--accent); font-weight: 700; }
+body[data-tema="nube"] .prio::before { border-radius: 50%; }
+body[data-tema="nube"] .prio-otra { color: var(--muted); }
+body[data-tema="nube"] .check input { accent-color: var(--accent); }
+body[data-tema="nube"] .check:hover { background: #eef6fd; }
+body[data-tema="nube"] .ticket.is-overdue { box-shadow: inset 0 5px 0 var(--alta); }
+
+/* Botones, chips y controles: todo redondeado */
+body[data-tema="nube"] .btn,
+body[data-tema="nube"] .tool,
+body[data-tema="nube"] .search input,
+body[data-tema="nube"] .auth-card input,
+body[data-tema="nube"] #password-form input { border-radius: 999px; }
+body[data-tema="nube"] .btn { font-weight: 700; padding: 8px 18px; }
+body[data-tema="nube"] .chip { border-radius: 999px; background: var(--paper); font-weight: 600; }
+body[data-tema="nube"] .chip[aria-pressed="true"] { background: var(--accent); }
+body[data-tema="nube"] .chip .sym, body[data-tema="nube"] .tool b { font-family: var(--ui); font-weight: 800; }
+body[data-tema="nube"] .segmented { border-radius: 999px; background: var(--paper); }
+body[data-tema="nube"] .segmented button { font-weight: 700; }
+body[data-tema="nube"] .segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-radius: 999px; }
+body[data-tema="nube"] .search input { background: var(--paper); padding-left: 40px; }
+body[data-tema="nube"] .search-icon { left: 14px; }
+body[data-tema="nube"] .search-key { border-radius: 999px; }
+
+/* Calendario: el día de hoy en rosa */
+body[data-tema="nube"] .cal-nav { border-radius: 50%; background: var(--paper); }
+body[data-tema="nube"] .cal-day { border-radius: 50%; }
+body[data-tema="nube"] .cal-day.today { box-shadow: none; background: var(--rosa); color: var(--rosa-ink); font-weight: 800; }
+body[data-tema="nube"] .cal-day[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+body[data-tema="nube"] .cal-day.has-due::before,
+body[data-tema="nube"] .lg-due { border-radius: 50%; }
+
+/* Botón +: una burbuja celeste */
+body[data-tema="nube"] .fab {
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 6px rgb(255 255 255 / 0.7), 0 8px 18px rgb(43 124 192 / 0.35);
+}
+
+/* Diálogos, editor y aviso */
+body[data-tema="nube"] .sheet { border-radius: 24px; }
+body[data-tema="nube"] .sheet::backdrop { background: rgb(40 72 103 / 0.35); }
+body[data-tema="nube"] .sheet-head h2 { font-weight: 800; }
+body[data-tema="nube"] .detail-paper,
+body[data-tema="nube"] .preview { border-radius: 18px; box-shadow: inset 0 0 0 2px #e4f1fb; }
+body[data-tema="nube"] .detail-meta { border-top: 2px dotted var(--line); }
+body[data-tema="nube"] #editor-text {
+  border-radius: 18px;
+  color: var(--ink);
+  font-family: var(--ui);
+  background-image: linear-gradient(#0000 calc(1.55em - 1px), #e1effa calc(1.55em - 1px));
+}
+body[data-tema="nube"] #editor-text::placeholder { color: #9db6cc; }
+body[data-tema="nube"] .preview-desc { color: var(--muted); }
+body[data-tema="nube"] .toast { background: var(--ink); color: #fff; border-radius: 999px; padding-left: 20px; }
+body[data-tema="nube"] .toast-action { border-radius: 999px; }
+body[data-tema="nube"] .badge { background: var(--rosa); color: var(--rosa-ink); }
+body[data-tema="nube"] :focus-visible { outline-color: #f08fb0; }
+
+/* ---------- Modo oscuro: cielo de noche, los tickets siguen siendo nubes ---------- */
+@media (prefers-color-scheme: dark) {
+  body[data-tema="nube"] {
+    --wall: #15233a;
+    --panel: #1c2e4a;
+    --paper: #f6faff;
+    --ink: #284867;
+    --text: #e3eefa;
+    --muted: #a5bdd6;
+    --line: #2f4767;
+    --steel: #4c6f99;
+    --steel-dark: #6d92bd;
+    --accent: #8fcaf3;
+    --accent-ink: #12233a;
+    --danger: #ff98ad;
+    background:
+      radial-gradient(1.5px 1.5px at 12% 18%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 64% 9%, #fff, transparent),
+      radial-gradient(1px 1px at 82% 36%, #fff, transparent),
+      radial-gradient(1px 1px at 38% 78%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 91% 84%, #fff, transparent),
+      var(--wall);
+    background-attachment: fixed;
+  }
+  body[data-tema="nube"] .ticket-wrap::before { background: repeating-linear-gradient(90deg, #6d92bd 0 18px, #8fb3dc 18px 36px); }
+  body[data-tema="nube"] .ticket-wrap { filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.3)); }
+  /* dentro del ticket (papel claro) el acento vuelve a ser el azul oscuro */
+  body[data-tema="nube"] .ticket,
+  body[data-tema="nube"] .detail-paper,
+  body[data-tema="nube"] .preview { --accent: #2b7cc0; }
+  body[data-tema="nube"] .ticket-head, body[data-tema="nube"] .pend-list { border-color: #c6def2; }
+  body[data-tema="nube"] .pend-box.is-clear { border-color: #c6def2; }
+  body[data-tema="nube"] .chip, body[data-tema="nube"] .segmented,
+  body[data-tema="nube"] .search input, body[data-tema="nube"] .cal-nav { background: var(--panel); }
+  body[data-tema="nube"] .fab { box-shadow: 0 0 0 6px rgb(143 202 243 / 0.18), 0 8px 18px rgb(0 0 0 / 0.4); }
+  body[data-tema="nube"] .toast { background: var(--paper); color: var(--ink); }
+  body[data-tema="nube"] .toast-action { color: var(--ink); background: rgb(40 72 103 / 0.1); }
+  body[data-tema="nube"] .sheet::backdrop { background: rgb(5 12 24 / 0.6); }
+}

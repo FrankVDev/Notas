@@ -81,6 +81,11 @@ class PasswordChange(BaseModel):
 
 class UserOut(BaseModel):
     username: str
+    theme: str | None = None  # clave del tema visual (ver temas.css); None = diseño por defecto
+
+    @classmethod
+    def of(cls, user: User) -> "UserOut":
+        return cls(username=user.username, theme=user.theme_clave)
 
 
 class AuthConfig(BaseModel):
@@ -254,7 +259,7 @@ def register(body: Credentials, request: Request, response: Response, db: Sessio
         print(f"Primera cuenta '{user.username}': recibió {claimed} notas existentes.")
     db.commit()
     auth.start_session(db, user, request, response)
-    return UserOut(username=user.username)
+    return UserOut.of(user)
 
 
 @app.post("/api/auth/login", response_model=UserOut)
@@ -268,7 +273,7 @@ def login(body: Credentials, request: Request, response: Response, db: Session =
         raise HTTPException(401, "Usuario o contraseña incorrectos.")
     auth.clear_failures(request, username)
     auth.start_session(db, user, request, response)
-    return UserOut(username=user.username)
+    return UserOut.of(user)
 
 
 @app.post("/api/auth/logout", status_code=204)
@@ -280,7 +285,7 @@ def logout(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user)):
-    return UserOut(username=user.username)
+    return UserOut.of(user)
 
 
 @app.post("/api/auth/password", status_code=204)

@@ -8,6 +8,7 @@ desde endpoints de la API sin repetir lógica.
 Los errores esperables (usuario inexistente, contraseña inválida...) se
 lanzan como AdminError con un mensaje listo para mostrar.
 """
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import Session
 
 from . import auth
-from .models import Note, User, UserSession
+from .models import Note, Theme, User, UserSession
 
 
 class AdminError(Exception):
@@ -38,10 +39,21 @@ class UserSummary:
     notes_done: int
     sessions: int               # sesiones abiertas (dispositivos)
     last_login: datetime | None  # inicio de sesión más reciente aún abierto
+    theme: str | None = None     # clave del tema asignado
 
     @property
     def notes_total(self) -> int:
         return self.notes_active + self.notes_done
+
+
+@dataclass
+class ThemeSummary:
+    id: int
+    clave: str
+    nombre: str
+    descripcion: str | None
+    activo: bool
+    users: int  # cuántos usuarios lo tienen asignado
 
 
 @dataclass
@@ -79,10 +91,11 @@ def list_users(db: Session) -> list[UserSummary]:
         select(
             User.id, User.username, User.created_at,
             func.coalesce(notes.c.active, 0), func.coalesce(notes.c.done, 0),
-            func.coalesce(sessions.c.open, 0), sessions.c.last_login,
+            func.coalesce(sessions.c.open, 0), sessions.c.last_login, Theme.clave,
         )
         .outerjoin(notes, notes.c.user_id == User.id)
         .outerjoin(sessions, sessions.c.user_id == User.id)
+        .outerjoin(Theme, Theme.id == User.theme_id)
         .order_by(User.id)
     ).all()
     return [UserSummary(*row) for row in rows]
@@ -159,3 +172,65 @@ def delete_user(db: Session, username: str) -> int:
     db.delete(user)  # las sesiones y notas se borran en cascada en la base
     db.commit()
     return notes
+
+
+# ---------- Temas visuales ----------
+# El aspecto de cada tema está en frontend/public/temas.css, en el bloque
+# body[data-tema="<clave>"]. Aquí solo se maneja el catálogo y la asignación.
+
+THEME_KEY_RE = re.compile(r"^[a-z0-9-]{2,30}$")
+
+
+def list_themes(db: Session) -> list[ThemeSummary]:
+    users = select(User.theme_id, func.count().label("n")).group_by(User.theme_id).subquery()
+    rows = db.execute(
+        select(Theme.id, Theme.clave, Theme.nombre, Theme.descripcion, Theme.activo, func.coalesce(users.c.n, 0))
+        .outerjoin(users, users.c.theme_id == Theme.id)
+        .order_by(Theme.nombre)
+    ).all()
+    return [ThemeSummary(*row) for row in rows]
+
+
+def get_theme(db: Session, clave: str) -> Theme:
+    theme = db.scalar(select(Theme).where(Theme.clave == clave.strip().lower()))
+    if theme is None:
+        raise AdminError(f'No existe el tema "{clave}". Revisa la lista con: temas', "not_found")
+    return theme
+
+
+def create_theme(db: Session, clave: str, nombre: str, descripcion: str | None = None) -> Theme:
+    """Registra un tema en el catálogo. Su CSS debe existir en temas.css con la misma clave."""
+    clave = clave.strip().lower()
+    if not THEME_KEY_RE.match(clave):
+        raise AdminError("La clave del tema debe tener de 2 a 30 caracteres: letras minúsculas, números o guiones.")
+    if not nombre.strip():
+        raise AdminError("Escribe un nombre para el tema.")
+    if db.scalar(select(Theme).where(Theme.clave == clave)):
+        raise AdminError(f'Ya existe un tema con la clave "{clave}".', "conflict")
+    theme = Theme(clave=clave, nombre=nombre.strip()[:60], descripcion=(descripcion or "").strip() or None)
+    db.add(theme)
+    db.commit()
+    return theme
+
+
+def set_theme_active(db: Session, clave: str, active: bool) -> Theme:
+    """Un tema desactivado se conserva asignado, pero sus usuarios ven el diseño por defecto."""
+    theme = get_theme(db, clave)
+    theme.activo = active
+    db.commit()
+    return theme
+
+
+def assign_theme(db: Session, username: str, clave: str | None) -> User:
+    """Asigna un tema al usuario, o lo quita con clave=None. Se ve al recargar la app."""
+    user = get_user(db, username)
+    if clave is None:
+        user.theme_id = None
+    else:
+        theme = get_theme(db, clave)
+        if not theme.activo:
+            raise AdminError(f'El tema "{theme.clave}" está desactivado. Actívalo primero.', "conflict")
+        user.theme_id = theme.id
+    db.commit()
+    db.refresh(user)
+    return user
